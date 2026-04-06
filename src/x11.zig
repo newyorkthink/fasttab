@@ -1009,6 +1009,19 @@ pub fn getStackingWindowList(
     return result;
 }
 
+/// Read _NET_ACTIVE_WINDOW from the root window and return the focused window ID.
+/// Returns 0 if the property is unset or the read fails.
+pub fn getActiveWindow(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t, atoms: Atoms) xcb.xcb_window_t {
+    const cookie = xcb.xcb_get_property(conn, 0, root, atoms.net_active_window, xcb.XCB_ATOM_WINDOW, 0, 1);
+    const reply = xcb.xcb_get_property_reply(conn, cookie, null);
+    if (reply == null) return 0;
+    defer std.c.free(reply);
+
+    if (xcb.xcb_get_property_value_length(reply) == 0) return 0;
+    const data: *const xcb.xcb_window_t = @ptrCast(@alignCast(xcb.xcb_get_property_value(reply)));
+    return data.*;
+}
+
 /// Convert a keycode to a keysym using xcb-keysyms.
 /// Uses the cached key_symbols from the connection to avoid per-call XCB round-trips.
 pub fn keycodeToKeysym(conn: *Connection, keycode: xcb.xcb_keycode_t, col: u16) xcb.xcb_keysym_t {

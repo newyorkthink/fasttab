@@ -51,6 +51,9 @@ pub const App = struct {
     show_delay_frames: ?u8,
     reacquire_pending: bool,
     reacquire_cursor: usize,
+    mru_list: std.ArrayList(x11.xcb.xcb_window_t),
+
+    const MRU_CAP: usize = 128;
 
     const Self = @This();
 
@@ -91,6 +94,14 @@ pub const App = struct {
             .height = 1080,
         };
 
+        var mru_list = std.ArrayList(x11.xcb.xcb_window_t).init(allocator);
+
+        // Seed MRU list with the currently active window (single entry)
+        const initial_active = x11.getActiveWindow(conn.conn, conn.root, conn.atoms);
+        if (initial_active != 0) {
+            mru_list.append(initial_active) catch {};
+        }
+
         var self = Self{
             .allocator = allocator,
             .items = items,
@@ -113,6 +124,7 @@ pub const App = struct {
             .show_delay_frames = null,
             .reacquire_pending = false,
             .reacquire_cursor = 0,
+            .mru_list = mru_list,
         };
 
         self.drainUpdateQueue();
@@ -157,6 +169,8 @@ pub const App = struct {
             task.deinit();
         }
         self.temp_tasks.deinit();
+
+        self.mru_list.deinit();
 
         // Unload downsample shader
         if (self.downsample_shader) |*shader| {
@@ -563,7 +577,7 @@ pub const App = struct {
             return;
         }
 
-        self.reorderByStacking();
+        self.reorderByMru();
 
         if (shift) {
             if (self.items.items.len > 0) {
@@ -1041,6 +1055,7 @@ pub const App = struct {
 
     /// Remove a DisplayWindow from self.items by window ID, freeing owned strings.
     fn removeItemByWindowId(self: *Self, wid: x11.xcb.xcb_window_t) void {
+        self.removeMruEntry(wid);
         for (self.items.items, 0..) |*item, i| {
             if (item.id == wid) {
                 if (item.cached_snapshot) |snapshot| {
@@ -1051,6 +1066,75 @@ pub const App = struct {
                 _ = self.items.orderedRemove(i);
                 return;
             }
+        }
+    }
+
+    /// Remove a window ID from the MRU list (linear scan).
+    fn removeMruEntry(self: *Self, wid: x11.xcb.xcb_window_t) void {
+        for (self.mru_list.items, 0..) |entry, i| {
+            if (entry == wid) {
+                _ = self.mru_list.orderedRemove(i);
+                return;
+            }
+        }
+    }
+
+    /// Update the MRU list when _NET_ACTIVE_WINDOW changes.
+    pub fn handleActiveWindowChanged(self: *Self) void {
+        const wid = x11.getActiveWindow(self.conn.conn, self.conn.root, self.conn.atoms);
+        if (wid == 0) return;
+
+        // Skip our own switcher window (it's not in items, but check by process)
+        // We identify it as "not tracked" — harmless to include since reorderByMru
+        // only picks up windows that exist in self.items. We still skip the known
+        // case where focus returns to us during switching.
+        if (self.state == .switching) return;
+
+        // Move wid to front: remove existing entry then prepend
+        self.removeMruEntry(wid);
+        self.mru_list.insert(0, wid) catch return;
+
+        // Trim to cap
+        if (self.mru_list.items.len > MRU_CAP) {
+            self.mru_list.items.len = MRU_CAP;
+        }
+    }
+
+    /// Reorder self.items by MRU history, falling back to current order for unlisted windows.
+    fn reorderByMru(self: *Self) void {
+        if (self.items.items.len == 0) return;
+
+        var new_items = std.ArrayList(ui.DisplayWindow).init(self.allocator);
+        defer new_items.deinit();
+        new_items.ensureTotalCapacity(self.items.items.len) catch return;
+
+        // First pass: add items in MRU order
+        for (self.mru_list.items) |mru_id| {
+            for (self.items.items) |item| {
+                if (item.id == mru_id) {
+                    new_items.appendAssumeCapacity(item);
+                    break;
+                }
+            }
+        }
+
+        // Second pass: append any items not in the MRU list (preserve their current order)
+        for (self.items.items) |item| {
+            var found = false;
+            for (new_items.items) |new_item| {
+                if (new_item.id == item.id) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                new_items.append(item) catch continue;
+            }
+        }
+
+        self.items.clearRetainingCapacity();
+        for (new_items.items) |item| {
+            self.items.append(item) catch continue;
         }
     }
 

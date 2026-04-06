@@ -169,6 +169,12 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
 
                 _ = application.handleKeyEvent(keysym, false);
             },
+            x11.xcb.XCB_PROPERTY_NOTIFY => {
+                const prop_event: *x11.xcb.xcb_property_notify_event_t = @ptrCast(event);
+                if (prop_event.atom == conn.atoms.net_active_window and prop_event.window == conn.root) {
+                    application.handleActiveWindowChanged();
+                }
+            },
             else => {
                 // Check for damage events
                 if (response_type == conn.damage_event_base + x11.xcb.XCB_DAMAGE_NOTIFY) {
