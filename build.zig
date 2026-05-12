@@ -123,4 +123,36 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/navigation.zig"),
     }));
     test_step.dependOn(&b.addRunArtifact(navigation_test).step);
+
+    // App filter test (filterItemsByClass + SwitchMode infrastructure)
+    const app_filter_test = b.addTest(.{
+        .root_source_file = b.path("src/tests/app_filter_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const app_module = b.createModule(.{
+        .root_source_file = b.path("src/app.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    app_module.addIncludePath(b.path("include"));
+    app_module.addIncludePath(b.path("lib/raylib-5.5_linux_amd64/include"));
+    app_filter_test.root_module.addImport("app", app_module);
+    app_filter_test.addIncludePath(b.path("include"));
+    app_filter_test.addIncludePath(b.path("lib/raylib-5.5_linux_amd64/include"));
+    app_filter_test.linkSystemLibrary("xcb");
+    app_filter_test.linkSystemLibrary("xcb-composite");
+    app_filter_test.linkSystemLibrary("xcb-image");
+    app_filter_test.linkSystemLibrary("xcb-keysyms");
+    app_filter_test.linkSystemLibrary("xcb-damage");
+    app_filter_test.addObjectFile(b.path("lib/raylib-5.5_linux_amd64/lib/libraylib.a"));
+    app_filter_test.linkSystemLibrary("GL");
+    app_filter_test.linkSystemLibrary("m");
+    app_filter_test.linkSystemLibrary("pthread");
+    app_filter_test.linkSystemLibrary("dl");
+    app_filter_test.linkSystemLibrary("rt");
+    app_filter_test.linkSystemLibrary("X11");
+    app_filter_test.linkSystemLibrary("X11-xcb");
+    app_filter_test.linkLibC();
+    test_step.dependOn(&b.addRunArtifact(app_filter_test).step);
 }

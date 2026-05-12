@@ -14,8 +14,7 @@ pub fn main() !void {
     while (args_iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "--replace")) {
             replace = true;
-        } else if (std.mem.eql(u8, arg, "daemon") or std.mem.eql(u8, arg, "--daemon")) {
-        } else {
+        } else if (std.mem.eql(u8, arg, "daemon") or std.mem.eql(u8, arg, "--daemon")) {} else {
             std.debug.print("Unknown command: {s}\n", .{arg});
             std.debug.print("Usage: fasttab [daemon] [--replace]\n", .{});
             std.process.exit(1);
@@ -78,6 +77,10 @@ fn runDaemon() !void {
     // Grab Alt+Tab passively
     x11.grabAltTab(conn.conn, conn.root);
     defer x11.ungrabAltTab(conn.conn, conn.root);
+
+    // Grab Win+Tab passively
+    x11.grabWinTab(conn.conn, conn.root);
+    defer x11.ungrabWinTab(conn.conn, conn.root);
 
     var task_queue = worker.TaskQueue.init(allocator);
 
@@ -147,8 +150,13 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
                 const state_mask = key_event.state;
 
                 const is_shift = (state_mask & x11.MOD_SHIFT) != 0;
+                const is_super = (state_mask & x11.MOD_SUPER) != 0;
+                const is_alt = (state_mask & x11.MOD_ALT) != 0;
 
-                if (application.state == .idle) {
+                if (keysym == x11.XK_Tab and is_super and !is_alt) {
+                    // Super+Tab (no Alt): same-app switcher — works in both idle and switching states
+                    application.handleWinTab(is_shift);
+                } else if (application.state == .idle) {
                     // Idle: only respond to Alt+Tab / Alt+Shift+Tab
                     if (keysym == x11.XK_Tab or keysym == x11.XK_ISO_Left_Tab) {
                         application.handleAltTab(is_shift or keysym == x11.XK_ISO_Left_Tab);

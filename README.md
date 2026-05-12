@@ -38,7 +38,8 @@ FastTab improves performance in several ways:
 
  - An X11-based desktop environment (e.g. KDE Plasma, Xfce, etc)
  - Hardware-accelerated OpenGL support
- - Rebind the default `Alt+Tab` shortcuts to something else (e.g. `Ctrl+Meta+Tab`, `Ctrl+Meta+Shift+Tab`), to avoid conflicts.  
+ - Rebind the default `Alt+Tab` shortcuts to something else (e.g. `Ctrl+Meta+Tab`, `Ctrl+Meta+Shift+Tab`), to avoid conflicts.
+ - To use **Win+Tab** (same-app switcher): disable any desktop-environment shortcut that uses `Super+Tab` (e.g. in KDE Plasma: *System Settings → Shortcuts → KWin → Walk Through Windows of Current Application*).
 
 ## Build instructions
 1. Make sure you have Zig installed (version 0.14.0 or later)

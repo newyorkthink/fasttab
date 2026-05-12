@@ -26,16 +26,21 @@ const log = std.log.scoped(.fasttab);
 
 // Global flag for capturing Xlib errors (used by GLX operations)
 var glx_error_code: u8 = 0;
+// Suppresses Xlib error logging during bracketed GLX operations (clearGlxError/checkGlxError).
+// Errors are still captured in glx_error_code; callers log a single consolidated message instead.
+var suppress_xlib_error_log: bool = false;
 
 fn xlibErrorHandler(_: ?*xlib.Display, event: ?*xlib.XErrorEvent) callconv(.C) c_int {
     if (event) |e| {
         glx_error_code = e.error_code;
-        log.warn("Xlib error: code={d} major={d} minor={d} serial={d}", .{
-            e.error_code,
-            e.request_code,
-            e.minor_code,
-            e.serial,
-        });
+        if (!suppress_xlib_error_log) {
+            log.warn("Xlib error: code={d} major={d} minor={d} serial={d}", .{
+                e.error_code,
+                e.request_code,
+                e.minor_code,
+                e.serial,
+            });
+        }
     }
     return 0; // Don't crash
 }
@@ -45,11 +50,13 @@ fn clearGlxError(display: *xlib.Display) void {
     glx_error_code = 0;
     _ = xlib.XSync(display, xlib.False);
     glx_error_code = 0;
+    suppress_xlib_error_log = true;
 }
 
 /// Sync and check if a GLX error occurred since the last clear.
 fn checkGlxError(display: *xlib.Display) bool {
     _ = xlib.XSync(display, xlib.False);
+    suppress_xlib_error_log = false;
     return glx_error_code != 0;
 }
 
@@ -58,6 +65,8 @@ pub const XK_Tab = 0xff09;
 pub const XK_ISO_Left_Tab = 0xfe20;
 pub const XK_Alt_L = 0xffe9;
 pub const XK_Alt_R = 0xffea;
+pub const XK_Super_L = 0xffeb;
+pub const XK_Super_R = 0xffec;
 pub const XK_Escape = 0xff1b;
 pub const XK_Return = 0xff0d;
 pub const XK_Left = 0xff51;
@@ -70,6 +79,7 @@ pub const MOD_SHIFT: u16 = 1; // XCB_MOD_MASK_SHIFT
 pub const MOD_LOCK: u16 = 2; // XCB_MOD_MASK_LOCK (CapsLock)
 pub const MOD_ALT: u16 = 8; // XCB_MOD_MASK_1
 pub const MOD_MOD2: u16 = 16; // XCB_MOD_MASK_2 (NumLock typically)
+pub const MOD_SUPER: u16 = 64; // XCB_MOD_MASK_4 (Super/Win key)
 
 // Cached current process PID (computed once)
 var cached_current_pid: ?std.posix.pid_t = null;
@@ -275,8 +285,9 @@ pub const WindowTexture = struct {
         if (checkGlxError(display)) {
             const total_us = @divTrunc(std.time.nanoTimestamp() - start_ns, std.time.ns_per_us);
             xlib.glBindTexture(xlib.GL_TEXTURE_2D, 0);
-            log.warn("GLX rebind failed for window {x} (us: total={d} clear_sync={d})", .{
+            log.warn("GLX rebind failed for window {x} (xlib_err={d}, us: total={d} clear_sync={d})", .{
                 self.window_id,
+                glx_error_code,
                 total_us,
                 @divTrunc(after_clear_ns - start_ns, std.time.ns_per_us),
             });
@@ -903,6 +914,68 @@ pub fn ungrabAltTab(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) void {
     log.info("Alt+Tab ungrabbed", .{});
 }
 
+/// Grab Win+Tab and Win+Shift+Tab passively on the root window.
+/// Same pattern as grabAltTab but using MOD_SUPER instead of MOD_ALT.
+pub fn grabWinTab(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) void {
+    const key_symbols = xcb.xcb_key_symbols_alloc(conn);
+    if (key_symbols == null) {
+        log.err("Failed to allocate key symbols for Win+Tab grab", .{});
+        return;
+    }
+    defer xcb.xcb_key_symbols_free(key_symbols);
+
+    const lock_variants = [_]u16{
+        0,
+        MOD_LOCK,
+        MOD_MOD2,
+        MOD_LOCK | MOD_MOD2,
+    };
+
+    const tab_codes = xcb.xcb_key_symbols_get_keycode(key_symbols, XK_Tab);
+    if (tab_codes) |codes| {
+        defer std.c.free(codes);
+        var i: usize = 0;
+        while (codes[i] != 0) : (i += 1) {
+            for (lock_variants) |lock| {
+                _ = xcb.xcb_grab_key(conn, 1, root, MOD_SUPER | lock, codes[i], xcb.XCB_GRAB_MODE_ASYNC, xcb.XCB_GRAB_MODE_ASYNC);
+                _ = xcb.xcb_grab_key(conn, 1, root, MOD_SUPER | MOD_SHIFT | lock, codes[i], xcb.XCB_GRAB_MODE_ASYNC, xcb.XCB_GRAB_MODE_ASYNC);
+            }
+        }
+    }
+
+    _ = xcb.xcb_flush(conn);
+    log.info("Win+Tab grabbed", .{});
+}
+
+/// Release all passive Win+Tab key grabs.
+pub fn ungrabWinTab(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) void {
+    const key_symbols = xcb.xcb_key_symbols_alloc(conn);
+    if (key_symbols == null) return;
+    defer xcb.xcb_key_symbols_free(key_symbols);
+
+    const lock_variants = [_]u16{
+        0,
+        MOD_LOCK,
+        MOD_MOD2,
+        MOD_LOCK | MOD_MOD2,
+    };
+
+    const tab_codes = xcb.xcb_key_symbols_get_keycode(key_symbols, XK_Tab);
+    if (tab_codes) |codes| {
+        defer std.c.free(codes);
+        var i: usize = 0;
+        while (codes[i] != 0) : (i += 1) {
+            for (lock_variants) |lock| {
+                _ = xcb.xcb_ungrab_key(conn, codes[i], root, MOD_SUPER | lock);
+                _ = xcb.xcb_ungrab_key(conn, codes[i], root, MOD_SUPER | MOD_SHIFT | lock);
+            }
+        }
+    }
+
+    _ = xcb.xcb_flush(conn);
+    log.info("Win+Tab ungrabbed", .{});
+}
+
 /// Actively grab the keyboard so ALL key events go to us during switching.
 pub fn grabKeyboard(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) bool {
     const start_ns = std.time.nanoTimestamp();
@@ -1088,6 +1161,7 @@ fn acquirePixmapBinding(
     const glx_pixmap = xlib.glXCreatePixmap(display, fb_config, pixmap, &glx_attribs);
     if (glx_pixmap == 0) {
         _ = xlib.XSync(display, xlib.False);
+        suppress_xlib_error_log = false;
         _ = xcb.xcb_free_pixmap(conn.conn, pixmap);
         return error.GLXPixmapCreationFailed;
     }

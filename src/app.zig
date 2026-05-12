@@ -19,6 +19,15 @@ pub const SwitcherState = enum {
     switching,
 };
 
+/// Which set of windows to display
+pub const SwitchMode = enum {
+    all_windows, // Alt+Tab: show everything
+    same_app, // Win+Tab: filter by WM_CLASS of the active window
+};
+
+// Re-exported so test files can construct DisplayWindow values without importing ui directly.
+pub const DisplayWindow = ui.DisplayWindow;
+
 /// Monitor information for window positioning
 pub const MonitorInfo = struct {
     index: i32,
@@ -52,6 +61,11 @@ pub const App = struct {
     reacquire_pending: bool,
     reacquire_cursor: usize,
     mru_list: std.ArrayList(x11.xcb.xcb_window_t),
+
+    // Win+Tab same-app filtering
+    switch_mode: SwitchMode,
+    filtered_items: std.ArrayList(ui.DisplayWindow), // non-owning shallow copies; strings owned by items
+    active_app_class: ?[]const u8, // owned; null when not filtering
 
     const MRU_CAP: usize = 128;
 
@@ -125,6 +139,9 @@ pub const App = struct {
             .reacquire_pending = false,
             .reacquire_cursor = 0,
             .mru_list = mru_list,
+            .switch_mode = .all_windows,
+            .filtered_items = std.ArrayList(ui.DisplayWindow).init(allocator),
+            .active_app_class = null,
         };
 
         self.drainUpdateQueue();
@@ -136,6 +153,12 @@ pub const App = struct {
 
     /// Clean up all resources
     pub fn deinit(self: *Self) void {
+        // filtered_items are shallow copies; deinit the ArrayList only (do NOT free strings)
+        self.filtered_items.deinit();
+        if (self.active_app_class) |class| {
+            self.allocator.free(class);
+        }
+
         // Free owned fields from items (textures are cleaned up via window_textures)
         for (self.items.items) |*item| {
             // Don't unload thumbnail_texture here - it's owned by window_textures
@@ -232,7 +255,7 @@ pub const App = struct {
 
         // Handle mouse input
         const mouse_pos = rl.GetMousePosition();
-        if (ui.getItemAtPosition(self.items.items, self.current_layout, mouse_pos)) |idx| {
+        if (ui.getItemAtPosition(self.displayItems(), self.current_layout, mouse_pos)) |idx| {
             rl.SetMouseCursor(rl.MOUSE_CURSOR_POINTING_HAND);
             self.mouseover_index = idx;
             if (rl.IsMouseButtonPressed(rl.MOUSE_BUTTON_LEFT)) {
@@ -417,11 +440,30 @@ pub const App = struct {
         self.temp_tasks.clearRetainingCapacity();
 
         if (any_changes) {
-            // Adjust selected index if out of bounds
-            if (self.items.items.len == 0) {
-                self.selected_index = 0;
-            } else if (self.selected_index >= self.items.items.len) {
-                self.selected_index = self.items.items.len - 1;
+            if (self.switch_mode == .same_app) {
+                // Rebuild filtered view now that self.items has changed.
+                self.buildFilteredItems();
+
+                // If all same-app windows disappear while the user is switching, cancel cleanly.
+                if (self.state == .switching and self.filtered_items.items.len == 0) {
+                    log.info("All same-app windows removed during switching, cancelling", .{});
+                    self.cancelSwitching(); // ungrabs keyboard, hides window, resets switch_mode
+                    return;
+                }
+
+                // Clamp selected_index against the (now-fresh) filtered list.
+                const dlen = self.displayItems().len;
+                if (dlen == 0) {
+                    self.selected_index = 0;
+                } else if (self.selected_index >= dlen) {
+                    self.selected_index = dlen - 1;
+                }
+            } else {
+                if (self.items.items.len == 0) {
+                    self.selected_index = 0;
+                } else if (self.selected_index >= self.items.items.len) {
+                    self.selected_index = self.items.items.len - 1;
+                }
             }
 
             // Recalculate layout
@@ -431,15 +473,17 @@ pub const App = struct {
 
     /// Move selection to next window (wraps around)
     pub fn selectNext(self: *Self) void {
-        if (self.items.items.len == 0) return;
-        self.selected_index = (self.selected_index + 1) % self.items.items.len;
+        const items = self.displayItems();
+        if (items.len == 0) return;
+        self.selected_index = (self.selected_index + 1) % items.len;
     }
 
     /// Move selection to previous window (wraps around)
     pub fn selectPrev(self: *Self) void {
-        if (self.items.items.len == 0) return;
+        const items = self.displayItems();
+        if (items.len == 0) return;
         if (self.selected_index == 0) {
-            self.selected_index = self.items.items.len - 1;
+            self.selected_index = items.len - 1;
         } else {
             self.selected_index -= 1;
         }
@@ -501,7 +545,7 @@ pub const App = struct {
     /// Show the switcher window (public for socket commands)
     pub fn showWindow(self: *Self) void {
         const start_ns = std.time.nanoTimestamp();
-        log.debug("Showing window with {d} items", .{self.items.items.len});
+        log.debug("Showing window with {d} items", .{self.displayItems().len});
 
         // Notify worker that window is visible
         if (self.update_queue) |queue| {
@@ -510,7 +554,7 @@ pub const App = struct {
         const after_notify_ns = std.time.nanoTimestamp();
 
         // Recalculate layout
-        self.current_layout = ui.calculateBestLayout(self.items.items);
+        self.current_layout = ui.calculateBestLayout(self.displayItems());
         const after_layout_ns = std.time.nanoTimestamp();
 
         // Query current mouse position and find monitor
@@ -599,6 +643,59 @@ pub const App = struct {
         log.info("Alt+Tab switching started (shift={}, selected={d})", .{ shift, self.selected_index });
     }
 
+    /// Handle Win+Tab press: start (or cycle) same-app switching.
+    pub fn handleWinTab(self: *Self, shift: bool) void {
+        if (self.state == .switching) {
+            if (shift) {
+                self.selectPrev();
+            } else {
+                self.selectNext();
+            }
+            return;
+        }
+
+        if (!x11.grabKeyboard(self.conn.conn, self.conn.root)) {
+            log.err("Could not grab keyboard, aborting Win+Tab", .{});
+            return;
+        }
+
+        const active_win = x11.getActiveWindow(self.conn.conn, self.conn.root, self.conn.atoms);
+        if (active_win == 0) {
+            log.debug("Win+Tab: no active window, aborting", .{});
+            x11.ungrabKeyboard(self.conn.conn);
+            return;
+        }
+
+        const class = x11.getWindowClass(self.allocator, self.conn.conn, active_win, self.conn.atoms);
+        if (std.mem.eql(u8, class, "(unknown)")) {
+            log.warn("Win+Tab: active window {x} has no WM_CLASS, aborting", .{active_win});
+            x11.ungrabKeyboard(self.conn.conn);
+            return;
+        }
+        // class is now an owned allocation; store it
+        if (self.active_app_class) |old| self.allocator.free(old);
+        self.active_app_class = class;
+        self.switch_mode = .same_app;
+
+        self.reorderByMru();
+        self.buildFilteredItems();
+
+        if (self.filtered_items.items.len <= 1) {
+            log.info("Win+Tab: {d} window(s) for '{s}', nothing to switch", .{ self.filtered_items.items.len, class });
+            x11.ungrabKeyboard(self.conn.conn);
+            self.resetSwitchMode();
+            return;
+        }
+
+        const n = self.displayItems().len;
+        self.selected_index = if (shift) n - 1 else 1;
+        self.show_delay_frames = SHOW_DELAY_FRAMES;
+        self.state = .switching;
+        log.info("Win+Tab switching started: class='{s}' count={d} shift={} selected={d}", .{
+            class, n, shift, self.selected_index,
+        });
+    }
+
     /// Handle a key event during switching.
     pub fn handleKeyEvent(self: *Self, keysym: u32, is_press: bool) bool {
         if (self.state != .switching) {
@@ -606,7 +703,9 @@ pub const App = struct {
         }
 
         if (!is_press) {
-            if (keysym == x11.XK_Alt_L or keysym == x11.XK_Alt_R) {
+            if (keysym == x11.XK_Alt_L or keysym == x11.XK_Alt_R or
+                keysym == x11.XK_Super_L or keysym == x11.XK_Super_R)
+            {
                 self.confirmSwitching();
                 return true;
             }
@@ -631,15 +730,15 @@ pub const App = struct {
                 return true;
             },
             x11.XK_Right => {
-                self.selected_index = nav.moveSelectionRight(self.selected_index, self.items.items.len);
+                self.selected_index = nav.moveSelectionRight(self.selected_index, self.displayItems().len);
                 return true;
             },
             x11.XK_Left => {
-                self.selected_index = nav.moveSelectionLeft(self.selected_index, self.items.items.len);
+                self.selected_index = nav.moveSelectionLeft(self.selected_index, self.displayItems().len);
                 return true;
             },
             x11.XK_Down => {
-                self.selected_index = nav.moveSelectionDown(self.selected_index, self.current_layout.columns, self.items.items.len);
+                self.selected_index = nav.moveSelectionDown(self.selected_index, self.current_layout.columns, self.displayItems().len);
                 return true;
             },
             x11.XK_Up => {
@@ -656,8 +755,9 @@ pub const App = struct {
 
         const start_ns = std.time.nanoTimestamp();
 
-        if (self.items.items.len > 0 and self.selected_index < self.items.items.len) {
-            const selected_id = self.items.items[self.selected_index].id;
+        const display = self.displayItems();
+        if (display.len > 0 and self.selected_index < display.len) {
+            const selected_id = display[self.selected_index].id;
             x11.activateWindow(self.conn.conn, self.conn.root, selected_id, self.conn.atoms);
             log.info("Confirmed: activating window {x}", .{selected_id});
         }
@@ -673,6 +773,7 @@ pub const App = struct {
         const after_hide_ns = std.time.nanoTimestamp();
 
         self.state = .idle;
+        self.resetSwitchMode();
 
         log.info(
             "profile confirmSwitching(us): total={d} activate={d} ungrab={d} hide={d}",
@@ -701,6 +802,7 @@ pub const App = struct {
         const after_hide_ns = std.time.nanoTimestamp();
 
         self.state = .idle;
+        self.resetSwitchMode();
 
         log.info(
             "profile cancelSwitching(us): total={d} ungrab={d} hide={d}",
@@ -1069,6 +1171,17 @@ pub const App = struct {
         }
     }
 
+    /// Reset to all_windows mode and release same_app filtering state.
+    /// Called at the end of confirm/cancel to ensure clean state for the next switch.
+    fn resetSwitchMode(self: *Self) void {
+        self.switch_mode = .all_windows;
+        self.filtered_items.clearRetainingCapacity();
+        if (self.active_app_class) |class| {
+            self.allocator.free(class);
+            self.active_app_class = null;
+        }
+    }
+
     /// Remove a window ID from the MRU list (linear scan).
     fn removeMruEntry(self: *Self, wid: x11.xcb.xcb_window_t) void {
         for (self.mru_list.items, 0..) |entry, i| {
@@ -1138,7 +1251,50 @@ pub const App = struct {
         }
     }
 
+    /// Returns the slice to render/navigate: filtered list in same_app mode, full list otherwise.
+    /// This is the single indirection point — all display/nav paths should call this instead of self.items.items.
+    pub fn displayItems(self: *Self) []ui.DisplayWindow {
+        return switch (self.switch_mode) {
+            .all_windows => self.items.items,
+            .same_app => self.filtered_items.items,
+        };
+    }
+
+    /// Populate filtered_items with shallow copies of items whose icon_id matches active_app_class.
+    /// No-op when active_app_class is null. Existing contents are cleared first.
+    pub fn buildFilteredItems(self: *Self) void {
+        self.filtered_items.clearRetainingCapacity();
+        const class = self.active_app_class orelse return;
+        filterItemsByClass(self.items.items, class, &self.filtered_items);
+    }
+
+    /// Propagate mutable rendering state from self.items into filtered_items.
+    ///
+    /// filtered_items holds VALUE copies taken at buildFilteredItems() time.  Several
+    /// fields are updated on self.items after that point (reacquire, damage, icon/title
+    /// worker updates) and the copies go stale.  We sync here rather than on each write
+    /// site to keep the rest of the code unchanged.
+    ///
+    /// Fields intentionally NOT synced:
+    ///   display_width / display_height — set by calculateBestLayout on the filtered
+    ///   slice; self.items values are from a different (all_windows) layout pass.
+    fn syncFilteredItems(self: *Self) void {
+        for (self.filtered_items.items) |*fi| {
+            const src = self.findItemByWindowId(fi.id) orelse continue;
+            fi.thumbnail_ready = src.thumbnail_ready;
+            fi.thumbnail_texture = src.thumbnail_texture;
+            fi.cached_snapshot = src.cached_snapshot; // may be null after reacquire freed it
+            fi.icon_texture = src.icon_texture;
+            fi.title = src.title; // same heap allocation; sync pointer in case title was updated
+        }
+    }
+
     fn render(self: *Self) void {
+        // Keep filtered_items in sync with self.items before every draw.
+        // processReacquireQueue() and handleDamageEvent() update self.items directly;
+        // without this sync filtered_items would have stale thumbnail_ready / cached_snapshot.
+        if (self.switch_mode == .same_app) self.syncFilteredItems();
+
         const win_x = self.monitor.x + @divTrunc(self.monitor.width - @as(i32, @intCast(self.current_layout.total_width)), 2);
         const win_y = self.monitor.y + @divTrunc(self.monitor.height - @as(i32, @intCast(self.current_layout.total_height)), 2);
         rl.SetWindowPosition(win_x, win_y);
@@ -1146,14 +1302,14 @@ pub const App = struct {
         rl.BeginDrawing();
         rl.ClearBackground(rl.Color{ .r = 0, .g = 0, .b = 0, .a = 0 });
         const shader_ptr: ?*const ui.DownsampleShader = if (self.downsample_shader) |*s| s else null;
-        ui.renderSwitcher(self.items.items, self.current_layout, self.selected_index, self.mouseover_index, self.font, shader_ptr);
+        ui.renderSwitcher(self.displayItems(), self.current_layout, self.selected_index, self.mouseover_index, self.font, shader_ptr);
         rl.EndDrawing();
     }
 
     fn updateLayout(self: *Self) void {
         const prev_width = self.current_layout.total_width;
         const prev_height = self.current_layout.total_height;
-        self.current_layout = ui.calculateBestLayout(self.items.items);
+        self.current_layout = ui.calculateBestLayout(self.displayItems());
 
         if (!self.window_hidden and (self.current_layout.total_width != prev_width or self.current_layout.total_height != prev_height)) {
             rl.SetWindowSize(@intCast(self.current_layout.total_width), @intCast(self.current_layout.total_height));
@@ -1164,6 +1320,20 @@ pub const App = struct {
         }
     }
 };
+
+/// Filter DisplayWindow items by WM_CLASS (icon_id), appending matches to out.
+/// Items appended to out are shallow (non-owning) copies — strings are NOT duplicated.
+pub fn filterItemsByClass(
+    items: []const ui.DisplayWindow,
+    class: []const u8,
+    out: *std.ArrayList(ui.DisplayWindow),
+) void {
+    for (items) |item| {
+        if (std.mem.eql(u8, item.icon_id, class)) {
+            out.append(item) catch {};
+        }
+    }
+}
 
 pub fn findMonitorAtPosition(pos: x11.MousePosition) MonitorInfo {
     const monitor_count = rl.GetMonitorCount();
