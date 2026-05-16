@@ -119,9 +119,8 @@ fn runDaemon() !void {
         // Poll for XCB events (16ms timeout ~= 60fps)
         _ = std.posix.poll(&pollfds, 16) catch {};
 
-        if (pollfds[0].revents & std.posix.POLL.IN != 0) {
-            processXcbEvents(&application, &conn);
-        }
+        // Always drain XCB events
+        processXcbEvents(&application, &conn);
 
         application.drainUpdateQueue();
         application.update();
