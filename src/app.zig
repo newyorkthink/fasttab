@@ -505,8 +505,15 @@ pub const App = struct {
         self.window_hidden = true;
         self.reacquire_pending = false;
 
-        // i3: keep GLX pixmap bindings alive, otherwise other workspace thumbnails fall back to icons.
+        // i3: keep GLX pixmap bindings alive, but force UI to use cached snapshots when live preview is stale.
         self.cacheAllSnapshots();
+
+        for (self.items.items) |*item| {
+            if (item.cached_snapshot != null) {
+                item.thumbnail_ready = false;
+            }
+        }
+
         const after_snapshot_ns = std.time.nanoTimestamp();
         const after_release_ns = after_snapshot_ns;
 
