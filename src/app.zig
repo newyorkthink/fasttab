@@ -1023,11 +1023,8 @@ pub const App = struct {
                 self.markThumbnailReady(target_id, true);
                 if (self.findItemByWindowId(target_id)) |item| {
                     item.thumbnail_texture = tex.toRaylibTexture();
-                    // Free cached snapshot now that live texture is available
-                    if (item.cached_snapshot) |snapshot| {
-                        rl.UnloadRenderTexture(snapshot);
-                        item.cached_snapshot = null;
-                    }
+                    // Keep cached_snapshot for i3 cross-workspace fallback.
+                    // Live texture is used when available; cached_snapshot remains as backup.
                     if (item.source_width != new_w or item.source_height != new_h) {
                         item.source_width = new_w;
                         item.source_height = new_h;
