@@ -114,6 +114,10 @@ pub const ThumbnailSize = layout_module.ThumbnailSize;
 pub const MAX_THUMBNAIL_WIDTH = layout_module.MAX_THUMBNAIL_WIDTH;
 
 pub fn calculateGridLayout(items: []DisplayWindow, target_height: u32) GridLayout {
+    return calculateGridLayoutWithin(items, target_height, MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+}
+
+pub fn calculateGridLayoutWithin(items: []DisplayWindow, target_height: u32, max_grid_width: u32, max_grid_height: u32) GridLayout {
     if (items.len == 0) {
         return GridLayout{
             .columns = 0,
@@ -124,31 +128,40 @@ pub fn calculateGridLayout(items: []DisplayWindow, target_height: u32) GridLayou
         };
     }
 
-    var total_item_width: u32 = 0;
     for (items) |*item| {
         const size = calculateThumbnailSize(item.source_width, item.source_height, MAX_THUMBNAIL_WIDTH, target_height);
         item.display_width = size.width;
         item.display_height = size.height;
-        total_item_width += item.display_width;
     }
 
     const item_full_height = target_height + TITLE_SPACING + @as(u32, @intCast(TITLE_FONT_SIZE));
 
     var best_columns: u32 = 1;
     var best_rows: u32 = @intCast(items.len);
+    var found_fit = false;
 
     var cols: u32 = 1;
     while (cols <= items.len) : (cols += 1) {
-        const rows = (items.len + cols - 1) / cols;
+        const rows_usize = (items.len + @as(usize, @intCast(cols)) - 1) / @as(usize, @intCast(cols));
+        const rows: u32 = @intCast(rows_usize);
 
-        const avg_width = total_item_width / @as(u32, @intCast(items.len));
-        const estimated_width = PADDING * 2 + cols * avg_width + (cols - 1) * SPACING;
-        const estimated_height = PADDING * 2 + @as(u32, @intCast(rows)) * item_full_height + (@as(u32, @intCast(rows)) - 1) * SPACING;
+        var max_row_width: u32 = 0;
+        var row_start: u32 = 0;
+        while (row_start < items.len) {
+            const items_in_row = @min(cols, @as(u32, @intCast(items.len)) - row_start);
+            const row_width = calculateRowWidth(items, row_start, items_in_row);
+            if (row_width > max_row_width) max_row_width = row_width;
+            row_start += cols;
+        }
 
-        if (estimated_width <= MAX_GRID_WIDTH and estimated_height <= MAX_GRID_HEIGHT) {
+        const estimated_width = PADDING * 2 + max_row_width;
+        const estimated_height = PADDING * 2 + rows * item_full_height + (rows - 1) * SPACING;
+
+        if (estimated_width <= max_grid_width and estimated_height <= max_grid_height) {
             best_columns = cols;
-            best_rows = @intCast(rows);
-        } else if (estimated_width > MAX_GRID_WIDTH) {
+            best_rows = rows;
+            found_fit = true;
+        } else if (estimated_width > max_grid_width and found_fit) {
             break;
         }
     }
@@ -176,12 +189,33 @@ pub fn calculateGridLayout(items: []DisplayWindow, target_height: u32) GridLayou
 }
 
 pub fn calculateBestLayout(items: []DisplayWindow) GridLayout {
-    var layout = calculateGridLayout(items, THUMBNAIL_HEIGHT);
+    return calculateBestLayoutWithin(items, MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+}
+
+pub fn calculateBestLayoutWithin(items: []DisplayWindow, max_grid_width: u32, max_grid_height: u32) GridLayout {
+    var layout = calculateGridLayoutWithin(items, THUMBNAIL_HEIGHT, max_grid_width, max_grid_height);
     var current_height: u32 = THUMBNAIL_HEIGHT;
-    while (layout.total_height > MAX_GRID_HEIGHT and current_height > 60) {
+    while ((layout.total_width > max_grid_width or layout.total_height > max_grid_height) and current_height > 60) {
         current_height -= 10;
-        layout = calculateGridLayout(items, current_height);
+        layout = calculateGridLayoutWithin(items, current_height, max_grid_width, max_grid_height);
     }
+    return layout;
+}
+
+pub fn calculateBestLayoutForMonitor(items: []DisplayWindow, monitor_width: i32, monitor_height: i32, workspace_names: []const []const u8) GridLayout {
+    const monitor_w: u32 = if (monitor_width > 0) @intCast(monitor_width) else MAX_GRID_WIDTH;
+    const monitor_h: u32 = if (monitor_height > 0) @intCast(monitor_height) else MAX_GRID_HEIGHT;
+
+    const max_grid_width = if (monitor_w > 120) @min(MAX_GRID_WIDTH, monitor_w - 80) else monitor_w;
+    const max_total_height = if (monitor_h > 120) @min(MAX_GRID_HEIGHT, monitor_h - 80) else monitor_h;
+    const top_offset = workspaceBarOffset(workspace_names);
+    const max_grid_height = if (max_total_height > top_offset + PADDING * 2)
+        max_total_height - top_offset
+    else
+        max_total_height;
+
+    var layout = calculateBestLayoutWithin(items, max_grid_width, max_grid_height);
+    addWorkspaceBarToLayout(&layout, workspace_names);
     return layout;
 }
 

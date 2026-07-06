@@ -582,18 +582,23 @@ pub const App = struct {
         }
         const after_notify_ns = std.time.nanoTimestamp();
 
-        self.refreshWorkspaceInfo();
-        self.refreshItemWorkspaces();
-
-        // Recalculate layout
-        self.current_layout = ui.calculateBestLayout(self.displayItems());
-        ui.addWorkspaceBarToLayout(&self.current_layout, self.workspace_names.items);
-        const after_layout_ns = std.time.nanoTimestamp();
-
-        // Query current mouse position and find monitor
+        // Query current mouse position and find monitor before layout.
+        // The switcher must fit the monitor it opens on, including small virtual displays.
         const mouse_pos = x11.getMousePosition(self.conn.conn, self.conn.root);
         self.monitor = findMonitorAtPosition(mouse_pos);
         const after_monitor_ns = std.time.nanoTimestamp();
+
+        self.refreshWorkspaceInfo();
+        self.refreshItemWorkspaces();
+
+        // Recalculate layout using the current monitor bounds.
+        self.current_layout = ui.calculateBestLayoutForMonitor(
+            self.displayItems(),
+            self.monitor.width,
+            self.monitor.height,
+            self.workspace_names.items,
+        );
+        const after_layout_ns = std.time.nanoTimestamp();
 
         rl.ClearWindowState(rl.FLAG_WINDOW_HIDDEN);
         const after_map_ns = std.time.nanoTimestamp();
@@ -624,13 +629,13 @@ pub const App = struct {
         const total_us = @divTrunc(after_focus_ns - start_ns, std.time.ns_per_us);
         if (total_us >= PROFILE_SLOW_SHOW_WINDOW_US) {
             log.debug(
-                "profile showWindow(us): total={d} notify={d} layout={d} monitor={d} map={d} size={d} position={d} focus={d}",
+                "profile showWindow(us): total={d} notify={d} monitor={d} layout={d} map={d} size={d} position={d} focus={d}",
                 .{
                     total_us,
                     @divTrunc(after_notify_ns - start_ns, std.time.ns_per_us),
-                    @divTrunc(after_layout_ns - after_notify_ns, std.time.ns_per_us),
-                    @divTrunc(after_monitor_ns - after_layout_ns, std.time.ns_per_us),
-                    @divTrunc(after_map_ns - after_monitor_ns, std.time.ns_per_us),
+                    @divTrunc(after_monitor_ns - after_notify_ns, std.time.ns_per_us),
+                    @divTrunc(after_layout_ns - after_monitor_ns, std.time.ns_per_us),
+                    @divTrunc(after_map_ns - after_layout_ns, std.time.ns_per_us),
                     @divTrunc(after_size_ns - after_map_ns, std.time.ns_per_us),
                     @divTrunc(after_position_ns - after_size_ns, std.time.ns_per_us),
                     @divTrunc(after_focus_ns - after_position_ns, std.time.ns_per_us),
@@ -1482,8 +1487,12 @@ pub const App = struct {
     fn updateLayout(self: *Self) void {
         const prev_width = self.current_layout.total_width;
         const prev_height = self.current_layout.total_height;
-        self.current_layout = ui.calculateBestLayout(self.displayItems());
-        ui.addWorkspaceBarToLayout(&self.current_layout, self.workspace_names.items);
+        self.current_layout = ui.calculateBestLayoutForMonitor(
+            self.displayItems(),
+            self.monitor.width,
+            self.monitor.height,
+            self.workspace_names.items,
+        );
 
         if (!self.window_hidden and (self.current_layout.total_width != prev_width or self.current_layout.total_height != prev_height)) {
             rl.SetWindowSize(@intCast(self.current_layout.total_width), @intCast(self.current_layout.total_height));
