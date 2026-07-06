@@ -3,9 +3,15 @@ const x11 = @import("x11.zig");
 const worker = @import("worker.zig");
 const app = @import("app.zig");
 
+const c = @cImport({
+    @cInclude("signal.h");
+    @cInclude("unistd.h");
+});
+
 const log = std.log.scoped(.fasttab);
 
 pub fn main() !void {
+    installFastSignalExit();
     var args_iter = std.process.args();
     _ = args_iter.next(); // skip program name
 
@@ -28,6 +34,16 @@ pub fn main() !void {
     }
 
     return runDaemon();
+}
+
+fn fastExitFromSignal(sig: c_int) callconv(.C) void {
+    const code: c_int = if (sig == c.SIGINT) 130 else 143;
+    c._exit(code);
+}
+
+fn installFastSignalExit() void {
+    _ = c.signal(c.SIGINT, fastExitFromSignal);
+    _ = c.signal(c.SIGTERM, fastExitFromSignal);
 }
 
 fn killExistingInstance() !void {

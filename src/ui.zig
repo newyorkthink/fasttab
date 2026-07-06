@@ -24,18 +24,19 @@ pub const HIGHLIGHT_COLOR_LINES = rl.Color{ .r = 0x3d, .g = 0xae, .b = 0xe9, .a 
 pub const HIGHLIGHT_COLOR_LESS = rl.Color{ .r = 0x2d, .g = 0x8e, .b = 0xc9, .a = 64 };
 pub const HIGHLIGHT_COLOR_LESS_LINES = rl.Color{ .r = 0x3d, .g = 0xae, .b = 0xe9, .a = 128 };
 pub const TITLE_COLOR = rl.Color{ .r = 255, .g = 255, .b = 255, .a = 255 };
-pub const WORKSPACE_BAR_HEIGHT: u32 = 30;
+pub const WORKSPACE_BAR_HEIGHT: u32 = 32;
 pub const WORKSPACE_BAR_SPACING: u32 = 10;
-pub const WORKSPACE_FONT_SIZE: i32 = 16;
+pub const WORKSPACE_FONT_SIZE: i32 = 17;
 pub const WORKSPACE_ITEM_PADDING_X: u32 = 10;
 pub const WORKSPACE_ITEM_SPACING: u32 = 8;
 pub const WORKSPACE_CURRENT_BG = rl.Color{ .r = 0x2d, .g = 0x8e, .b = 0xc9, .a = 160 };
 pub const WORKSPACE_CURRENT_BORDER = rl.Color{ .r = 0x3d, .g = 0xae, .b = 0xe9, .a = 255 };
 pub const WORKSPACE_TEXT_COLOR = rl.Color{ .r = 255, .g = 255, .b = 255, .a = 235 };
-pub const WINDOW_WORKSPACE_BADGE_FONT_SIZE: i32 = 13;
+pub const WINDOW_WORKSPACE_BADGE_FONT_SIZE: i32 = 14;
 pub const WINDOW_WORKSPACE_BADGE_PADDING_X: u32 = 7;
 pub const WINDOW_WORKSPACE_BADGE_PADDING_Y: u32 = 3;
 pub const WINDOW_WORKSPACE_BADGE_MARGIN: u32 = 7;
+pub const WINDOW_WORKSPACE_BADGE_MIN_SIZE: u32 = 24;
 pub const WINDOW_WORKSPACE_BADGE_BG = rl.Color{ .r = 0x12, .g = 0x12, .b = 0x12, .a = 190 };
 pub const WINDOW_WORKSPACE_BADGE_BORDER = rl.Color{ .r = 0x3d, .g = 0xae, .b = 0xe9, .a = 210 };
 pub const WINDOW_WORKSPACE_BADGE_TEXT = rl.Color{ .r = 255, .g = 255, .b = 255, .a = 245 };
@@ -424,7 +425,15 @@ pub fn loadSystemFont(size: i32) rl.Font {
     return rl.GetFontDefault();
 }
 
-fn drawTruncatedText(font: rl.Font, text: []const u8, x: f32, y: f32, font_size: f32, max_width: f32, color: rl.Color) void {
+fn drawTextExWeight(font: rl.Font, text_ptr: [*c]const u8, x: f32, y: f32, font_size: f32, spacing: f32, color: rl.Color, bold: bool) void {
+    const pos = rl.Vector2{ .x = @floor(x), .y = @floor(y) };
+    rl.DrawTextEx(font, text_ptr, pos, font_size, spacing, color);
+    if (bold) {
+        rl.DrawTextEx(font, text_ptr, rl.Vector2{ .x = pos.x + 1.0, .y = pos.y }, font_size, spacing, color);
+    }
+}
+
+fn drawTruncatedTextWithWeight(font: rl.Font, text: []const u8, x: f32, y: f32, font_size: f32, max_width: f32, color: rl.Color, bold: bool) void {
     const spacing: f32 = 1;
     var text_buf: [256]u8 = undefined;
     const ellipsis = "...";
@@ -438,7 +447,7 @@ fn drawTruncatedText(font: rl.Font, text: []const u8, x: f32, y: f32, font_size:
 
     if (text_size.x <= max_width) {
         const text_x = x + (max_width - text_size.x) / 2.0;
-        rl.DrawTextEx(font, text_ptr, rl.Vector2{ .x = @floor(text_x), .y = @floor(y) }, font_size, spacing, color);
+        drawTextExWeight(font, text_ptr, text_x, y, font_size, spacing, color, bold);
         return;
     }
 
@@ -472,8 +481,17 @@ fn drawTruncatedText(font: rl.Font, text: []const u8, x: f32, y: f32, font_size:
 
     const final_size = rl.MeasureTextEx(font, text_ptr, font_size, spacing);
     const text_x = x + (max_width - final_size.x) / 2.0;
-    rl.DrawTextEx(font, text_ptr, rl.Vector2{ .x = @floor(text_x), .y = @floor(y) }, font_size, spacing, color);
+    drawTextExWeight(font, text_ptr, text_x, y, font_size, spacing, color, bold);
 }
+
+fn drawTruncatedText(font: rl.Font, text: []const u8, x: f32, y: f32, font_size: f32, max_width: f32, color: rl.Color) void {
+    drawTruncatedTextWithWeight(font, text, x, y, font_size, max_width, color, false);
+}
+
+fn drawTruncatedTextBold(font: rl.Font, text: []const u8, x: f32, y: f32, font_size: f32, max_width: f32, color: rl.Color) void {
+    drawTruncatedTextWithWeight(font, text, x, y, font_size, max_width, color, true);
+}
+
 
 
 pub fn workspaceBarOffset(workspace_names: []const []const u8) u32 {
@@ -527,12 +545,12 @@ fn drawWorkspaceBar(font: rl.Font, workspace_names: []const []const u8, current_
         };
 
         if (current_workspace != null and current_workspace.? == i) {
-            rl.DrawRectangleRounded(rect, 0.25, 6, WORKSPACE_CURRENT_BG);
-            rl.DrawRectangleRoundedLinesEx(rect, 0.25, 6, 1, WORKSPACE_CURRENT_BORDER);
+            rl.DrawRectangleRec(rect, WORKSPACE_CURRENT_BG);
+            rl.DrawRectangleLinesEx(rect, 1, WORKSPACE_CURRENT_BORDER);
         }
 
         const text_y = y + @as(f32, @floatFromInt(WORKSPACE_BAR_HEIGHT - @as(u32, @intCast(WORKSPACE_FONT_SIZE)))) / 2.0;
-        drawTruncatedText(
+        drawTruncatedTextBold(
             font,
             name,
             x + @as(f32, @floatFromInt(WORKSPACE_ITEM_PADDING_X)),
@@ -562,28 +580,31 @@ fn drawWindowWorkspaceBadge(font: rl.Font, workspace_names: []const []const u8, 
     const font_size: f32 = @floatFromInt(WINDOW_WORKSPACE_BADGE_FONT_SIZE);
     const measured = measureUiText(font, label, font_size);
     const text_w: u32 = if (measured.x < 1.0) 1 else @intFromFloat(@ceil(measured.x));
-    const badge_w = text_w + WINDOW_WORKSPACE_BADGE_PADDING_X * 2;
-    const badge_h = @as(u32, @intCast(WINDOW_WORKSPACE_BADGE_FONT_SIZE)) + WINDOW_WORKSPACE_BADGE_PADDING_Y * 2;
+    const text_h: u32 = @intCast(WINDOW_WORKSPACE_BADGE_FONT_SIZE);
+    const content_w = text_w + WINDOW_WORKSPACE_BADGE_PADDING_X * 2;
+    const content_h = text_h + WINDOW_WORKSPACE_BADGE_PADDING_Y * 2;
+    const badge_size = @max(WINDOW_WORKSPACE_BADGE_MIN_SIZE, @max(content_w, content_h));
 
-    if (width <= badge_w + WINDOW_WORKSPACE_BADGE_MARGIN * 2) return;
+    if (width <= badge_size + WINDOW_WORKSPACE_BADGE_MARGIN * 2) return;
 
-    const badge_x = x + @as(f32, @floatFromInt(width - badge_w - WINDOW_WORKSPACE_BADGE_MARGIN));
+    const badge_x = x + @as(f32, @floatFromInt(width - badge_size - WINDOW_WORKSPACE_BADGE_MARGIN));
     const badge_y = y + @as(f32, @floatFromInt(WINDOW_WORKSPACE_BADGE_MARGIN));
     const rect = rl.Rectangle{
         .x = badge_x,
         .y = badge_y,
-        .width = @floatFromInt(badge_w),
-        .height = @floatFromInt(badge_h),
+        .width = @floatFromInt(badge_size),
+        .height = @floatFromInt(badge_size),
     };
 
-    rl.DrawRectangleRounded(rect, 0.28, 6, WINDOW_WORKSPACE_BADGE_BG);
-    rl.DrawRectangleRoundedLinesEx(rect, 0.28, 6, 1, WINDOW_WORKSPACE_BADGE_BORDER);
+    rl.DrawRectangleRec(rect, WINDOW_WORKSPACE_BADGE_BG);
+    rl.DrawRectangleLinesEx(rect, 1, WINDOW_WORKSPACE_BADGE_BORDER);
 
-    const text_y = badge_y + @as(f32, @floatFromInt(WINDOW_WORKSPACE_BADGE_PADDING_Y));
-    drawTruncatedText(
+    const text_x = badge_x + (@as(f32, @floatFromInt(badge_size)) - @as(f32, @floatFromInt(text_w))) / 2.0;
+    const text_y = badge_y + (@as(f32, @floatFromInt(badge_size)) - font_size) / 2.0;
+    drawTruncatedTextBold(
         font,
         label,
-        badge_x + @as(f32, @floatFromInt(WINDOW_WORKSPACE_BADGE_PADDING_X)),
+        text_x,
         text_y,
         font_size,
         @floatFromInt(text_w),
