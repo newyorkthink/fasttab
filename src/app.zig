@@ -251,15 +251,9 @@ pub const App = struct {
             }
         }
 
-        // Cancel switching if window loses focus (e.g., clicked outside)
-        if (self.focus_grace_frames > 0) {
-            self.focus_grace_frames -= 1;
-        } else if (self.state == .switching and !rl.IsWindowFocused()) {
-            self.cancelSwitching();
-            return;
-        }
-
-        // Handle mouse input
+        // Handle mouse input first.
+        // In i3, clicking the switcher may briefly make raylib think the window lost focus.
+        // If focus-loss is handled before mouse input, clicks can be ignored.
         const mouse_pos = rl.GetMousePosition();
         if (ui.getItemAtPosition(self.displayItems(), self.current_layout, mouse_pos)) |idx| {
             rl.SetMouseCursor(rl.MOUSE_CURSOR_POINTING_HAND);
@@ -267,10 +261,19 @@ pub const App = struct {
             if (rl.IsMouseButtonPressed(rl.MOUSE_BUTTON_LEFT)) {
                 self.selected_index = idx;
                 self.confirmSwitching();
+                return;
             }
         } else {
             rl.SetMouseCursor(rl.MOUSE_CURSOR_DEFAULT);
             self.mouseover_index = null;
+        }
+
+        // Cancel switching if window loses focus (e.g., clicked outside)
+        if (self.focus_grace_frames > 0) {
+            self.focus_grace_frames -= 1;
+        } else if (self.state == .switching and !rl.IsWindowFocused()) {
+            self.cancelSwitching();
+            return;
         }
 
         self.processReacquireQueue();
@@ -505,14 +508,8 @@ pub const App = struct {
         self.window_hidden = true;
         self.reacquire_pending = false;
 
-        // i3: keep GLX pixmap bindings alive, but force UI to use cached snapshots when live preview is stale.
+        // i3: keep GLX pixmap bindings alive, otherwise other workspace thumbnails fall back to icons.
         self.cacheAllSnapshots();
-
-        for (self.items.items) |*item| {
-            if (item.cached_snapshot != null) {
-                item.thumbnail_ready = false;
-            }
-        }
 
         const after_snapshot_ns = std.time.nanoTimestamp();
         const after_release_ns = after_snapshot_ns;
@@ -1096,8 +1093,9 @@ pub const App = struct {
         self.reacquire_pending = self.hasPendingReacquire();
 
         const frame_us = @divTrunc(std.time.nanoTimestamp() - start_ns, std.time.ns_per_us);
-        if (frame_us >= PROFILE_SLOW_REACQUIRE_FRAME_US or failed_count > 0) {
-            log.info(
+        // i3: disabled noisy per-frame reacquire profiling logs.
+        if (false and (frame_us >= PROFILE_SLOW_REACQUIRE_FRAME_US or failed_count > 0)) {
+            log.debug(
                 "profile reacquire frame(us): total={d} reacquired={d} failed={d} max_window={d} max_window_id={x} pending={}",
                 .{ frame_us, reacquired_count, failed_count, max_window_us, max_window_id, self.reacquire_pending },
             );
