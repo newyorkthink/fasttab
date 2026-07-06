@@ -365,6 +365,7 @@ pub const App = struct {
                         .display_height = 0,
                         .thumbnail_ready = has_texture,
                         .cached_snapshot = null,
+                        .workspace = data.workspace,
                     };
 
                     self.items.append(new_item) catch {
@@ -580,6 +581,7 @@ pub const App = struct {
         const after_notify_ns = std.time.nanoTimestamp();
 
         self.refreshWorkspaceInfo();
+        self.refreshItemWorkspaces();
 
         // Recalculate layout
         self.current_layout = ui.calculateBestLayout(self.displayItems());
@@ -1413,6 +1415,7 @@ pub const App = struct {
             fi.thumbnail_texture = src.thumbnail_texture;
             fi.cached_snapshot = src.cached_snapshot; // may be null after reacquire freed it
             fi.icon_texture = src.icon_texture;
+            fi.workspace = src.workspace;
             fi.title = src.title; // same heap allocation; sync pointer in case title was updated
         }
     }
@@ -1439,6 +1442,13 @@ pub const App = struct {
                 continue;
             };
         }
+    }
+
+    fn refreshItemWorkspaces(self: *Self) void {
+        for (self.items.items) |*item| {
+            item.workspace = x11.getWindowDesktop(self.conn.conn, item.id, self.conn.atoms);
+        }
+        if (self.switch_mode == .same_app) self.syncFilteredItems();
     }
 
     fn render(self: *Self) void {

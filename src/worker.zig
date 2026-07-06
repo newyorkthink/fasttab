@@ -17,6 +17,7 @@ pub const UpdateTask = union(enum) {
         title: []const u8, // owned
         icon_id: []const u8, // owned (WM_CLASS)
         is_minimized: bool,
+        workspace: ?u32 = null,
         allocator: std.mem.Allocator,
     };
     pub const WindowRemoved = struct { window_id: x11.xcb.xcb_window_t };
@@ -433,12 +434,14 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
                 };
 
                 const is_minimized = x11.isWindowMinimized(conn.conn, item.window_id, conn.atoms);
+                const workspace = x11.getWindowDesktop(conn.conn, item.window_id, conn.atoms);
 
                 queue.push(.{ .window_added = .{
                     .window_id = item.window_id,
                     .title = title_send,
                     .icon_id = icon_id_send,
                     .is_minimized = is_minimized,
+                    .workspace = workspace,
                     .allocator = allocator,
                 } });
             }

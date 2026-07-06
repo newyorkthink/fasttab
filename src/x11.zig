@@ -840,7 +840,7 @@ fn fallbackWorkspaceInfo(allocator: std.mem.Allocator, desktop_count: u32, curre
 }
 
 /// Get the desktop number a window is on (0xFFFFFFFF means "all desktops")
-fn getWindowDesktop(conn: *xcb.xcb_connection_t, window: xcb.xcb_window_t, atoms: Atoms) ?u32 {
+pub fn getWindowDesktop(conn: *xcb.xcb_connection_t, window: xcb.xcb_window_t, atoms: Atoms) ?u32 {
     const cookie = xcb.xcb_get_property(conn, 0, window, atoms.net_wm_desktop, xcb.XCB_ATOM_CARDINAL, 0, 1);
     const reply = xcb.xcb_get_property_reply(conn, cookie, null);
     if (reply == null) {

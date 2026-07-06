@@ -24,14 +24,21 @@ pub const HIGHLIGHT_COLOR_LINES = rl.Color{ .r = 0x3d, .g = 0xae, .b = 0xe9, .a 
 pub const HIGHLIGHT_COLOR_LESS = rl.Color{ .r = 0x2d, .g = 0x8e, .b = 0xc9, .a = 64 };
 pub const HIGHLIGHT_COLOR_LESS_LINES = rl.Color{ .r = 0x3d, .g = 0xae, .b = 0xe9, .a = 128 };
 pub const TITLE_COLOR = rl.Color{ .r = 255, .g = 255, .b = 255, .a = 255 };
-pub const WORKSPACE_BAR_HEIGHT: u32 = 24;
-pub const WORKSPACE_BAR_SPACING: u32 = 8;
-pub const WORKSPACE_FONT_SIZE: i32 = 14;
-pub const WORKSPACE_ITEM_PADDING_X: u32 = 8;
-pub const WORKSPACE_ITEM_SPACING: u32 = 6;
+pub const WORKSPACE_BAR_HEIGHT: u32 = 30;
+pub const WORKSPACE_BAR_SPACING: u32 = 10;
+pub const WORKSPACE_FONT_SIZE: i32 = 16;
+pub const WORKSPACE_ITEM_PADDING_X: u32 = 10;
+pub const WORKSPACE_ITEM_SPACING: u32 = 8;
 pub const WORKSPACE_CURRENT_BG = rl.Color{ .r = 0x2d, .g = 0x8e, .b = 0xc9, .a = 160 };
 pub const WORKSPACE_CURRENT_BORDER = rl.Color{ .r = 0x3d, .g = 0xae, .b = 0xe9, .a = 255 };
 pub const WORKSPACE_TEXT_COLOR = rl.Color{ .r = 255, .g = 255, .b = 255, .a = 235 };
+pub const WINDOW_WORKSPACE_BADGE_FONT_SIZE: i32 = 13;
+pub const WINDOW_WORKSPACE_BADGE_PADDING_X: u32 = 7;
+pub const WINDOW_WORKSPACE_BADGE_PADDING_Y: u32 = 3;
+pub const WINDOW_WORKSPACE_BADGE_MARGIN: u32 = 7;
+pub const WINDOW_WORKSPACE_BADGE_BG = rl.Color{ .r = 0x12, .g = 0x12, .b = 0x12, .a = 190 };
+pub const WINDOW_WORKSPACE_BADGE_BORDER = rl.Color{ .r = 0x3d, .g = 0xae, .b = 0xe9, .a = 210 };
+pub const WINDOW_WORKSPACE_BADGE_TEXT = rl.Color{ .r = 255, .g = 255, .b = 255, .a = 245 };
 pub const ROUNDNESS: f32 = 0.08;
 
 // Icon overlay constants
@@ -94,6 +101,7 @@ pub const DisplayWindow = struct {
     display_height: u32,
     thumbnail_ready: bool,
     cached_snapshot: ?rl.RenderTexture2D,
+    workspace: ?u32 = null,
 };
 
 // Re-export GridLayout from layout module
@@ -538,6 +546,51 @@ fn drawWorkspaceBar(font: rl.Font, workspace_names: []const []const u8, current_
     }
 }
 
+
+fn workspaceLabel(workspace_names: []const []const u8, workspace: ?u32) ?[]const u8 {
+    const idx = workspace orelse return null;
+    if (idx == 0xFFFFFFFF) return "*";
+
+    const index: usize = @intCast(idx);
+    if (index < workspace_names.len) return workspace_names[index];
+    return null;
+}
+
+fn drawWindowWorkspaceBadge(font: rl.Font, workspace_names: []const []const u8, workspace: ?u32, x: f32, y: f32, width: u32) void {
+    const label = workspaceLabel(workspace_names, workspace) orelse return;
+
+    const font_size: f32 = @floatFromInt(WINDOW_WORKSPACE_BADGE_FONT_SIZE);
+    const measured = measureUiText(font, label, font_size);
+    const text_w: u32 = if (measured.x < 1.0) 1 else @intFromFloat(@ceil(measured.x));
+    const badge_w = text_w + WINDOW_WORKSPACE_BADGE_PADDING_X * 2;
+    const badge_h = @as(u32, @intCast(WINDOW_WORKSPACE_BADGE_FONT_SIZE)) + WINDOW_WORKSPACE_BADGE_PADDING_Y * 2;
+
+    if (width <= badge_w + WINDOW_WORKSPACE_BADGE_MARGIN * 2) return;
+
+    const badge_x = x + @as(f32, @floatFromInt(width - badge_w - WINDOW_WORKSPACE_BADGE_MARGIN));
+    const badge_y = y + @as(f32, @floatFromInt(WINDOW_WORKSPACE_BADGE_MARGIN));
+    const rect = rl.Rectangle{
+        .x = badge_x,
+        .y = badge_y,
+        .width = @floatFromInt(badge_w),
+        .height = @floatFromInt(badge_h),
+    };
+
+    rl.DrawRectangleRounded(rect, 0.28, 6, WINDOW_WORKSPACE_BADGE_BG);
+    rl.DrawRectangleRoundedLinesEx(rect, 0.28, 6, 1, WINDOW_WORKSPACE_BADGE_BORDER);
+
+    const text_y = badge_y + @as(f32, @floatFromInt(WINDOW_WORKSPACE_BADGE_PADDING_Y));
+    drawTruncatedText(
+        font,
+        label,
+        badge_x + @as(f32, @floatFromInt(WINDOW_WORKSPACE_BADGE_PADDING_X)),
+        text_y,
+        font_size,
+        @floatFromInt(text_w),
+        WINDOW_WORKSPACE_BADGE_TEXT,
+    );
+}
+
 pub fn renderSwitcher(
     items: []DisplayWindow,
     layout: GridLayout,
@@ -643,7 +696,7 @@ pub fn renderSwitcher(
                 if (item.icon_texture) |icon_tex| {
                     const thumb_h: f32 = @floatFromInt(item.display_height);
                     const thumb_w: f32 = @floatFromInt(item.display_width);
-                    const icon_size = thumb_h * 0.55;
+                    const icon_size = thumb_h * 0.42;
                     const icon_x = x + (thumb_w - icon_size) / 2.0;
                     const icon_y = thumb_y + (thumb_h - icon_size) / 2.0;
                     const icon_src = rl.Rectangle{
@@ -661,6 +714,8 @@ pub fn renderSwitcher(
                     rl.DrawTexturePro(icon_tex, icon_src, icon_dst, rl.Vector2{ .x = 0, .y = 0 }, 0, rl.WHITE);
                 }
             }
+
+            drawWindowWorkspaceBadge(font, workspace_names, item.workspace, x, thumb_y, item.display_width);
 
             // Draw icon overlay at bottom-center of grid cell (when live texture or cached snapshot is shown).
             // Uses item_height (not display_height) so the icon stays a consistent size
