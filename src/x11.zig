@@ -600,35 +600,37 @@ pub fn getWindowList(allocator: std.mem.Allocator, conn: *xcb.xcb_connection_t, 
     return result;
 }
 
+fn getWindowTitleProperty(
+    allocator: std.mem.Allocator,
+    conn: *xcb.xcb_connection_t,
+    window: xcb.xcb_window_t,
+    property: xcb.xcb_atom_t,
+    property_type: xcb.xcb_atom_t,
+) ?[]const u8 {
+    const cookie = xcb.xcb_get_property(conn, 0, window, property, property_type, 0, 2048);
+    const reply = xcb.xcb_get_property_reply(conn, cookie, null);
+    if (reply == null) return null;
+    defer std.c.free(reply);
+
+    const len = xcb.xcb_get_property_value_length(reply);
+    if (len <= 0) return null;
+
+    const data: [*]const u8 = @ptrCast(xcb.xcb_get_property_value(reply));
+    return allocator.dupe(u8, data[0..@intCast(len)]) catch null;
+}
+
 pub fn getWindowTitle(
     allocator: std.mem.Allocator,
     conn: *xcb.xcb_connection_t,
     window: xcb.xcb_window_t,
     atoms: Atoms,
 ) []const u8 {
-    // Try _NET_WM_NAME (UTF-8) first
-    const net_cookie = xcb.xcb_get_property(conn, 0, window, atoms.net_wm_name, atoms.utf8_string, 0, 1024);
-    const net_reply = xcb.xcb_get_property_reply(conn, net_cookie, null);
-    if (net_reply != null) {
-        defer std.c.free(net_reply);
-        const len = xcb.xcb_get_property_value_length(net_reply);
-        if (len > 0) {
-            const data: [*]const u8 = @ptrCast(xcb.xcb_get_property_value(net_reply));
-            return allocator.dupe(u8, data[0..@intCast(len)]) catch "(unknown)";
-        }
-    }
-
-    // Fallback to WM_NAME
-    const wm_cookie = xcb.xcb_get_property(conn, 0, window, atoms.wm_name, xcb.XCB_ATOM_STRING, 0, 1024);
-    const wm_reply = xcb.xcb_get_property_reply(conn, wm_cookie, null);
-    if (wm_reply != null) {
-        defer std.c.free(wm_reply);
-        const len = xcb.xcb_get_property_value_length(wm_reply);
-        if (len > 0) {
-            const data: [*]const u8 = @ptrCast(xcb.xcb_get_property_value(wm_reply));
-            return allocator.dupe(u8, data[0..@intCast(len)]) catch "(unknown)";
-        }
-    }
+    // Prefer UTF-8 EWMH titles. Some apps expose _NET_WM_NAME with a nonstandard
+    // property type, so retry with TYPE_ANY before falling back to WM_NAME.
+    if (getWindowTitleProperty(allocator, conn, window, atoms.net_wm_name, atoms.utf8_string)) |title| return title;
+    if (getWindowTitleProperty(allocator, conn, window, atoms.net_wm_name, xcb.XCB_GET_PROPERTY_TYPE_ANY)) |title| return title;
+    if (getWindowTitleProperty(allocator, conn, window, atoms.wm_name, atoms.utf8_string)) |title| return title;
+    if (getWindowTitleProperty(allocator, conn, window, atoms.wm_name, xcb.XCB_GET_PROPERTY_TYPE_ANY)) |title| return title;
 
     return "(unknown)";
 }

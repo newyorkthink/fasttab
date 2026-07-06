@@ -64,8 +64,6 @@ fn runDaemon() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const stdout = std.io.getStdOut().writer();
-
     var conn = try x11.Connection.init();
     defer conn.deinit();
 
@@ -90,7 +88,7 @@ fn runDaemon() !void {
     };
 
     if (!task_queue.waitForFirstScan(10000)) {
-        try stdout.print("Timeout waiting for worker scan.\n", .{});
+        log.err("Timeout waiting for worker scan", .{});
         task_queue.requestStop();
         worker_thread.join();
         task_queue.deinit();
@@ -103,7 +101,7 @@ fn runDaemon() !void {
     defer application.deinit();
     application.hideWindow();
 
-    try stdout.print("Daemon ready: {d} windows tracked, Alt+Tab grabbed.\n", .{application.windowCount()});
+    log.debug("Daemon ready: {d} windows tracked", .{application.windowCount()});
 
     // Main loop: poll on XCB file descriptor
     const xcb_fd = x11.getXcbFd(conn.conn);
@@ -126,7 +124,7 @@ fn runDaemon() !void {
     worker_thread.join();
     task_queue.deinit();
 
-    try stdout.print("Daemon stopped.\n", .{});
+    log.debug("Daemon stopped", .{});
 }
 
 /// Process all pending XCB events (key press/release, damage)
@@ -166,10 +164,12 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
                     }
                 } else {
                     // Switching: normalize Tab keycodes so Alt+Shift+Tab always means previous.
-                    const effective_keysym = if (is_tab_key)
-                        if (is_shift or shifted_keysym == x11.XK_ISO_Left_Tab) x11.XK_ISO_Left_Tab else x11.XK_Tab
-                    else
-                        base_keysym;
+                    const effective_keysym = if (is_tab_key) blk: {
+                        break :blk if (is_shift or shifted_keysym == x11.XK_ISO_Left_Tab)
+                            x11.XK_ISO_Left_Tab
+                        else
+                            x11.XK_Tab;
+                    } else base_keysym;
                     _ = application.handleKeyEvent(effective_keysym, true);
                 }
             },

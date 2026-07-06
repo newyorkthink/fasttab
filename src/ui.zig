@@ -298,65 +298,18 @@ fn tryLoadFontRecursive(
 }
 
 pub fn loadSystemFont(size: i32) rl.Font {
-    const font_paths = [_][*c]const u8{
-        // Prefer CJK fonts with decent Latin glyphs.
-        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/noto-cjk/NotoSansSC-Regular.otf",
-        "/usr/share/fonts/adobe-source-han-sans/SourceHanSansSC-Regular.otf",
-        "/usr/share/fonts/source-han-sans/SourceHanSansSC-Regular.otf",
-
-        // WenQuanYi fallback. MicroHei looks cleaner than ZenHei bitmap glyphs.
-        "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
-        "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
-
-        // Last-resort Latin/symbol fonts.
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
-        "/usr/share/fonts/noto/NotoEmoji-Regular.ttf",
-        "/usr/share/fonts/truetype/ancient-scripts/Symbola.ttf",
-        "/usr/share/fonts/gd-s2/Symbola.ttf",
-    };
-
-    // Load curated list of characters to support most languages + Emojis
-    var codepoints: [65536]c_int = undefined;
+    // Keep the atlas small enough to load reliably, while still supporting Chinese titles.
+    var codepoints: [32768]c_int = undefined;
     var count: usize = 0;
 
     const ranges = [_][2]c_int{
         .{ 0x0020, 0x007E }, // Basic Latin
         .{ 0x00A0, 0x00FF }, // Latin-1 Supplement
         .{ 0x0100, 0x017F }, // Latin Extended-A
-        .{ 0x0180, 0x024F }, // Latin Extended-B
-        .{ 0x0250, 0x02AF }, // IPA Extensions
-        .{ 0x0300, 0x036F }, // Combining Diacritical Marks
-        .{ 0x0370, 0x03FF }, // Greek and Coptic
-        .{ 0x0400, 0x04FF }, // Cyrillic
-        .{ 0x0500, 0x052F }, // Cyrillic Supplement
-        .{ 0x1E00, 0x1EFF }, // Latin Extended Additional
+        .{ 0x2000, 0x206F }, // General Punctuation
         .{ 0x3000, 0x303F }, // CJK Symbols and Punctuation
-        .{ 0x3400, 0x4DBF }, // CJK Extension A
         .{ 0x4E00, 0x9FFF }, // CJK Unified Ideographs
         .{ 0xFF00, 0xFFEF }, // Fullwidth Forms
-        .{ 0x2000, 0x20CF }, // General Punctuation & Currency
-        .{ 0x2100, 0x218F }, // Letterlike Symbols & Number Forms
-        .{ 0x2190, 0x21FF }, // Arrows
-        .{ 0x2200, 0x22FF }, // Mathematical Operators
-        .{ 0x2300, 0x23FF }, // Miscellaneous Technical
-        .{ 0x2460, 0x24FF }, // Enclosed Alphanumerics
-        .{ 0x2500, 0x257F }, // Box Drawing
-        .{ 0x25A0, 0x25FF }, // Geometric Shapes
-        .{ 0x2600, 0x26FF }, // Miscellaneous Symbols
-        .{ 0x2700, 0x27BF }, // Dingbats
-        .{ 0xE000, 0xF8FF }, // Private Use Area (Nerd Fonts)
-        .{ 0x1F600, 0x1F64F }, // Emoticons
     };
 
     for (ranges) |range| {
@@ -369,26 +322,46 @@ pub fn loadSystemFont(size: i32) rl.Font {
         }
     }
 
-    // Prefer per-user fonts without hard-coding /home/user.
-    // The recursive scan covers ~/.local/share/fonts/noto-cjk and ~/.local/share/fonts/wenquanyi.
-    const cjk_preferred = [_][]const u8{
-        "NotoSansCJK",
-        "NotoSansSC",
-        "SourceHanSans",
-        "wqy-microhei",
-        "wqy-zenhei",
-    };
-
+    // User-local exact paths first, without hard-coding /home/user.
     if (std.process.getEnvVarOwned(std.heap.page_allocator, "HOME")) |home| {
         defer std.heap.page_allocator.free(home);
-        var local_fonts_buf: [std.fs.max_path_bytes:0]u8 = undefined;
-        if (std.fmt.bufPrintZ(&local_fonts_buf, "{s}/.local/share/fonts", .{home})) |local_fonts| {
-            if (tryLoadFontRecursive(local_fonts, 4, size, &codepoints[0], count, cjk_preferred[0..])) |font| return font;
-        } else |_| {}
+        const local_paths = [_][]const u8{
+            ".local/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            ".local/share/fonts/noto-cjk/NotoSansSC-Regular.otf",
+            ".local/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+            ".local/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
+        };
+        for (local_paths) |rel| {
+            var buf: [std.fs.max_path_bytes:0]u8 = undefined;
+            if (std.fmt.bufPrintZ(&buf, "{s}/{s}", .{ home, rel })) |path| {
+                if (tryLoadFont(path.ptr, size, &codepoints[0], count)) |font| return font;
+            } else |_| {}
+        }
     } else |_| {}
 
+    const font_paths = [_][*c]const u8{
+        // Prefer CJK fonts that also have acceptable Latin glyphs.
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansSC-Regular.otf",
+        "/usr/share/fonts/adobe-source-han-sans/SourceHanSansSC-Regular.otf",
+        "/usr/share/fonts/source-han-sans/SourceHanSansSC-Regular.otf",
 
-    if (tryLoadFontRecursive("/usr/share/fonts", 4, size, &codepoints[0], count, cjk_preferred[0..])) |font| return font;
+        // WenQuanYi fallback.
+        "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+        "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
+
+        // Last-resort Latin fonts.
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
+    };
 
     for (font_paths) |path| {
         if (tryLoadFont(path, size, &codepoints[0], count)) |font| return font;
