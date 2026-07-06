@@ -14,6 +14,8 @@ const PROFILE_SLOW_REACQUIRE_WINDOW_US: i128 = 4_000;
 const PROFILE_SLOW_REACQUIRE_FRAME_US: i128 = 8_000;
 
 /// State machine for the Alt+Tab switcher
+
+/// State machine for the Alt+Tab switcher
 pub const SwitcherState = enum {
     idle,
     switching,
