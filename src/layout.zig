@@ -2,8 +2,8 @@ const std = @import("std");
 
 // Visual design constants
 pub const THUMBNAIL_HEIGHT: u32 = 200;
-pub const MAX_THUMBNAIL_WIDTH: u32 = 360;
-pub const SPACING: u32 = 14;
+pub const MAX_THUMBNAIL_WIDTH: u32 = 356;
+pub const SPACING: u32 = 12;
 pub const PADDING: u32 = 16;
 pub const MAX_GRID_WIDTH: u32 = 1840;
 pub const MAX_GRID_HEIGHT: u32 = 1040;
