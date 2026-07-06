@@ -232,6 +232,8 @@ pub fn loadTextureFromThumbnail(thumb: *const thumbnail.Thumbnail) rl.Texture2D 
 
 pub fn loadSystemFont(size: i32) rl.Font {
     const font_paths = [_][*c]const u8{
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
@@ -248,7 +250,7 @@ pub fn loadSystemFont(size: i32) rl.Font {
     };
 
     // Load curated list of characters to support most languages + Emojis
-    var codepoints: [16384]c_int = undefined;
+    var codepoints: [65536]c_int = undefined;
     var count: usize = 0;
 
     const ranges = [_][2]c_int{
@@ -262,6 +264,10 @@ pub fn loadSystemFont(size: i32) rl.Font {
         .{ 0x0400, 0x04FF }, // Cyrillic
         .{ 0x0500, 0x052F }, // Cyrillic Supplement
         .{ 0x1E00, 0x1EFF }, // Latin Extended Additional
+        .{ 0x3000, 0x303F }, // CJK Symbols and Punctuation
+        .{ 0x3400, 0x4DBF }, // CJK Extension A
+        .{ 0x4E00, 0x9FFF }, // CJK Unified Ideographs
+        .{ 0xFF00, 0xFFEF }, // Fullwidth Forms
         .{ 0x2000, 0x20CF }, // General Punctuation & Currency
         .{ 0x2100, 0x218F }, // Letterlike Symbols & Number Forms
         .{ 0x2190, 0x21FF }, // Arrows
