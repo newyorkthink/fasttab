@@ -270,7 +270,7 @@ pub const App = struct {
         if (ui.getItemAtPosition(self.displayItems(), self.current_layout, mouse_pos)) |idx| {
             rl.SetMouseCursor(rl.MOUSE_CURSOR_POINTING_HAND);
             self.mouseover_index = idx;
-            if (mouse_pressed or mouse_released) {
+            if (mouse_pressed) {
                 self.selected_index = idx;
                 self.confirmSwitching();
                 return;
@@ -520,6 +520,7 @@ pub const App = struct {
 
         self.window_hidden = true;
         self.reacquire_pending = false;
+        self.mouse_left_was_down = false;
 
         // i3: keep GLX pixmap bindings alive, otherwise other workspace thumbnails fall back to icons.
         self.cacheAllSnapshots();
@@ -592,6 +593,7 @@ pub const App = struct {
 
         self.focus_grace_frames = 5;
         self.window_hidden = false;
+        self.mouse_left_was_down = false;
 
         self.reacquire_pending = self.hasPendingReacquire();
         self.reacquire_cursor = if (self.items.items.len > 0) self.selected_index % self.items.items.len else 0;
@@ -629,6 +631,8 @@ pub const App = struct {
             return;
         }
 
+        self.mouse_left_was_down = false;
+
         if (!x11.grabKeyboard(self.conn.conn, self.conn.root)) {
             log.err("Could not grab keyboard, aborting Alt+Tab", .{});
             return;
@@ -636,16 +640,15 @@ pub const App = struct {
 
         self.reorderByMru();
 
-        if (shift) {
-            if (self.items.items.len > 0) {
-                self.selected_index = self.items.items.len - 1;
-            }
+        const n = self.items.items.len;
+        if (n == 0) {
+            self.selected_index = 0;
+        } else if (shift) {
+            // Alt+Shift+Tab starts from the last item for reverse navigation.
+            self.selected_index = n - 1;
         } else {
-            if (self.items.items.len > 1) {
-                self.selected_index = 1;
-            } else {
-                self.selected_index = 0;
-            }
+            // Show the current active window first.  Pressing Tab then moves to the next item.
+            self.selected_index = 0;
         }
 
         // Don't show the window yet — wait a couple of frames.  If Alt is
@@ -668,6 +671,8 @@ pub const App = struct {
             return;
         }
 
+        self.mouse_left_was_down = false;
+
         if (!x11.grabKeyboard(self.conn.conn, self.conn.root)) {
             log.err("Could not grab keyboard, aborting Win+Tab", .{});
             return;
@@ -682,7 +687,7 @@ pub const App = struct {
 
         const class = x11.getWindowClass(self.allocator, self.conn.conn, active_win, self.conn.atoms);
         if (std.mem.eql(u8, class, "(unknown)")) {
-            log.warn("Win+Tab: active window {x} has no WM_CLASS, aborting", .{active_win});
+            log.debug("Win+Tab: active window {x} has no WM_CLASS, aborting", .{active_win});
             x11.ungrabKeyboard(self.conn.conn);
             return;
         }
@@ -702,7 +707,7 @@ pub const App = struct {
         }
 
         const n = self.displayItems().len;
-        self.selected_index = if (shift) n - 1 else 1;
+        self.selected_index = if (shift) n - 1 else 0;
         self.show_delay_frames = SHOW_DELAY_FRAMES;
         self.state = .switching;
         log.debug("Win+Tab switching started: class='{s}' count={d} shift={} selected={d}", .{
@@ -740,7 +745,12 @@ pub const App = struct {
                 return true;
             },
             x11.XK_Tab => {
-                self.selectNext();
+                if (self.shift_held) {
+                    self.tab_pressed_during_shift = true;
+                    self.selectPrev();
+                } else {
+                    self.selectNext();
+                }
                 return true;
             },
             x11.XK_ISO_Left_Tab => {
@@ -801,6 +811,7 @@ pub const App = struct {
         const display = self.displayItems();
         if (display.len > 0 and self.selected_index < display.len) {
             const selected_id = display[self.selected_index].id;
+            self.recordMruActivation(selected_id);
             x11.activateWindow(self.conn.conn, self.conn.root, selected_id, self.conn.atoms);
             log.debug("Confirmed: activating window {x}", .{selected_id});
         }
@@ -905,7 +916,7 @@ pub const App = struct {
     /// Reorder internal items to match stacking order (reversed = MRU first)
     fn reorderByStacking(self: *Self) void {
         const stacking = x11.getStackingWindowList(self.allocator, self.conn.conn, self.conn.root, self.conn.atoms) catch |err| {
-            log.warn("Could not get stacking list: {}", .{err});
+            log.debug("Could not get stacking list: {}", .{err});
             return;
         };
         defer self.allocator.free(stacking);
@@ -1236,6 +1247,16 @@ pub const App = struct {
         }
     }
 
+    /// Record a window activation immediately so the next Alt+Tab order is stable.
+    fn recordMruActivation(self: *Self, wid: x11.xcb.xcb_window_t) void {
+        if (wid == 0) return;
+        self.removeMruEntry(wid);
+        self.mru_list.insert(0, wid) catch return;
+        if (self.mru_list.items.len > MRU_CAP) {
+            self.mru_list.items.len = MRU_CAP;
+        }
+    }
+
     /// Update the MRU list when _NET_ACTIVE_WINDOW changes.
     pub fn handleActiveWindowChanged(self: *Self) void {
         const wid = x11.getActiveWindow(self.conn.conn, self.conn.root, self.conn.atoms);
@@ -1247,14 +1268,7 @@ pub const App = struct {
         // case where focus returns to us during switching.
         if (self.state == .switching) return;
 
-        // Move wid to front: remove existing entry then prepend
-        self.removeMruEntry(wid);
-        self.mru_list.insert(0, wid) catch return;
-
-        // Trim to cap
-        if (self.mru_list.items.len > MRU_CAP) {
-            self.mru_list.items.len = MRU_CAP;
-        }
+        self.recordMruActivation(wid);
     }
 
     /// Reorder self.items by MRU history, falling back to current order for unlisted windows.

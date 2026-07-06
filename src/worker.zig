@@ -216,7 +216,7 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
     };
     defer conn.deinit();
 
-    log.info("Background worker started", .{});
+    log.debug("Background worker started", .{});
 
     var known_windows = std.AutoHashMap(x11.xcb.xcb_window_t, void).init(allocator);
     defer known_windows.deinit();
@@ -281,7 +281,7 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
             if (tracked_windows.fetchRemove(dropped_wid)) |entry| {
                 var tw = entry.value;
                 tw.deinit();
-                log.info("Re-discovering dropped window {x}", .{dropped_wid});
+                log.debug("Re-discovering dropped window {x}", .{dropped_wid});
             }
             _ = known_windows.remove(dropped_wid);
         }
@@ -300,7 +300,7 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
             .known_windows = if (known_list.items.len > 0) known_list.items else null,
             .capture_only_new = capture_only_new,
         }, &pidCache) catch |err| {
-            log.warn("Background worker: Scan failed: {}", .{err});
+            log.debug("Background worker: Scan failed: {}", .{err});
             continue;
         };
         defer scan_result.deinit();
@@ -461,5 +461,5 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
         allocator.free(key.*);
     }
 
-    log.info("Background worker stopped", .{});
+    log.debug("Background worker stopped", .{});
 }
