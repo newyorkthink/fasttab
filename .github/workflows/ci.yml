@@ -87,7 +87,7 @@ jobs:
 
       - name: Build Release
         if: steps.check_changes.outputs.should_release == 'true'
-        run: zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-gnu -Dcpu=baseline
+        run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
 
       - name: Generate Changelog
         id: generate_log
