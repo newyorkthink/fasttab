@@ -346,7 +346,7 @@ pub const App = struct {
                         .source_height = source_height,
                         .display_width = 0,
                         .display_height = 0,
-                        .thumbnail_ready = has_texture and !self.window_hidden,
+                        .thumbnail_ready = has_texture,
                         .cached_snapshot = null,
                     };
 
@@ -512,13 +512,9 @@ pub const App = struct {
         self.window_hidden = true;
         self.reacquire_pending = false;
 
-        // Cache thumbnail snapshots before releasing GLX bindings
-        self.cacheAllSnapshots();
+        // i3: keep GLX pixmap bindings alive, otherwise other workspace thumbnails fall back to icons.
         const after_snapshot_ns = std.time.nanoTimestamp();
-
-        // Release GLX bindings so other compositors (KDE taskbar) can use the pixmaps
-        self.releaseAllBindings();
-        const after_release_ns = std.time.nanoTimestamp();
+        const after_release_ns = after_snapshot_ns;
 
         const total_us = @divTrunc(after_release_ns - start_ns, std.time.ns_per_us);
         if (total_us >= PROFILE_SLOW_HIDE_WINDOW_US) {
@@ -844,8 +840,7 @@ pub const App = struct {
             // Always acknowledge the damage to prevent event queue buildup
             _ = x11.xcb.xcb_damage_subtract(self.conn.conn, tex.damage, 0, 0);
 
-            // Skip rebind when hidden — bindings are released
-            if (self.window_hidden) return;
+            // i3 fork: bindings stay alive, so keep updating thumbnails while switcher is hidden.
 
             if (!tex.rebind(self.conn)) {
                 // Rebind failed — pixmap is stale, try to reacquire a fresh one
