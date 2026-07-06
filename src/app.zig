@@ -1038,10 +1038,7 @@ pub const App = struct {
                 // No texture yet (minimized or initial creation failed) — try to create one
                 const win_tex = x11.createWindowTexture(self.conn, target_id) catch {
                     failed_count += 1;
-
-                    // i3: non-current workspace windows may be unmapped.
-                    // Drop and let worker rediscover it later when it becomes capturable.
-                    if (self.update_queue) |q| q.reportDropped(target_id);
+                    // Leave thumbnail_ready = false; will retry on next show
                     continue;
                 };
 
