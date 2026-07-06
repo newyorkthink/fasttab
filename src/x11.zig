@@ -4,7 +4,7 @@ const ui = @import("ui.zig");
 const rl = ui.rl;
 
 // Feature flags
-const FILTER_BY_CURRENT_DESKTOP = true;
+const FILTER_BY_CURRENT_DESKTOP = false;
 
 pub const xcb = @cImport({
     @cInclude("xcb/xcb.h");
