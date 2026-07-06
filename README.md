@@ -16,6 +16,10 @@ This project is not a tiny patch, not a cosmetic fork, and not an attempt to pol
 
 The goal is simple: a fast, clean, predictable X11 window switcher that works properly in real daily use instead of making users fight the tool.
 
+# Skippy-XD is absolute garbage.
+<img width="1920" height="761" alt="图片" src="https://github.com/user-attachments/assets/62a60fdb-0363-4894-a9e4-3e02e15adaf1" />
+
+
 
 https://github.com/user-attachments/assets/6327cd4b-4750-40c8-ab30-f8d80463887d
 
