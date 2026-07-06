@@ -90,7 +90,7 @@ pub const App = struct {
 
         // Create raylib window (hidden initially via FLAG_WINDOW_HIDDEN)
         rl.SetConfigFlags(rl.FLAG_WINDOW_UNDECORATED | rl.FLAG_WINDOW_TRANSPARENT | rl.FLAG_WINDOW_TOPMOST | rl.FLAG_WINDOW_HIDDEN);
-        rl.SetTraceLogLevel(rl.LOG_WARNING);
+        rl.SetTraceLogLevel(rl.LOG_ERROR);
         rl.InitWindow(800, 600, "FastTab");
         rl.SetTargetFPS(60);
         const font = ui.loadSystemFont(ui.TITLE_FONT_SIZE);
@@ -329,7 +329,7 @@ pub const App = struct {
                                 has_texture = true;
                             }
                         } else |err| {
-                            log.warn("GLX texture failed for {x}: {}, showing icon fallback", .{ data.window_id, err });
+                            log.debug("GLX texture failed for {x}: {}, showing icon fallback", .{ data.window_id, err });
                         }
                     } else {
                         log.debug("Minimized window {x}, showing icon fallback", .{data.window_id});
@@ -529,7 +529,7 @@ pub const App = struct {
 
         const total_us = @divTrunc(after_release_ns - start_ns, std.time.ns_per_us);
         if (total_us >= PROFILE_SLOW_HIDE_WINDOW_US) {
-            log.warn(
+            log.debug(
                 "profile hideWindow(us): total={d} notify={d} hide={d} snapshot={d} release={d} windows={d}",
                 .{
                     total_us,
@@ -875,7 +875,7 @@ pub const App = struct {
                 tex.invalidate(self.conn);
                 if (!tex.reacquire(self.conn)) {
                     // Window is truly gone — destroy texture and remove from items
-                    log.warn("Reacquire also failed for window {x}, removing", .{drawable});
+                    log.debug("Reacquire also failed for window {x}, removing", .{drawable});
                     var t = self.window_textures.fetchRemove(drawable) orelse return;
                     t.value.deinit(self.conn);
                     self.removeItemByWindowId(drawable);
@@ -1105,7 +1105,7 @@ pub const App = struct {
         }
 
         for (to_remove.items) |wid| {
-            log.warn("Removing stale GLX texture for window {x} during progressive reacquire", .{wid});
+            log.debug("Removing stale GLX texture for window {x} during progressive reacquire", .{wid});
             if (self.window_textures.fetchRemove(wid)) |entry| {
                 var t = entry.value;
                 t.deinit(self.conn);

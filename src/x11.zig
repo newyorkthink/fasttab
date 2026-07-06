@@ -34,7 +34,7 @@ fn xlibErrorHandler(_: ?*xlib.Display, event: ?*xlib.XErrorEvent) callconv(.C) c
     if (event) |e| {
         glx_error_code = e.error_code;
         if (!suppress_xlib_error_log) {
-            log.warn("Xlib error: code={d} major={d} minor={d} serial={d}", .{
+            log.debug("Xlib error: code={d} major={d} minor={d} serial={d}", .{
                 e.error_code,
                 e.request_code,
                 e.minor_code,
@@ -255,7 +255,7 @@ pub const WindowTexture = struct {
         if (self.bound) return true;
 
         const binding = acquirePixmapBinding(conn, display, self.window_id, self.visual_id, self.gl_texture, self.texture_format) catch |err| {
-            log.warn("Reacquire failed for window {x}: {}", .{ self.window_id, err });
+            log.debug("Reacquire failed for window {x}: {}", .{ self.window_id, err });
             return false;
         };
 
@@ -293,7 +293,7 @@ pub const WindowTexture = struct {
         if (checkGlxError(display)) {
             const total_us = @divTrunc(std.time.nanoTimestamp() - start_ns, std.time.ns_per_us);
             xlib.glBindTexture(xlib.GL_TEXTURE_2D, 0);
-            log.warn("GLX rebind failed for window {x} (xlib_err={d}, us: total={d} clear_sync={d})", .{
+            log.debug("GLX rebind failed for window {x} (xlib_err={d}, us: total={d} clear_sync={d})", .{
                 self.window_id,
                 glx_error_code,
                 total_us,
@@ -305,7 +305,7 @@ pub const WindowTexture = struct {
         xlib.glBindTexture(xlib.GL_TEXTURE_2D, 0);
         const total_us = @divTrunc(std.time.nanoTimestamp() - start_ns, std.time.ns_per_us);
         if (total_us >= 2_000) {
-            log.warn("profile rebind slow (us): window={x} total={d} clear_sync={d}", .{
+            log.debug("profile rebind slow (us): window={x} total={d} clear_sync={d}", .{
                 self.window_id,
                 total_us,
                 @divTrunc(after_clear_ns - start_ns, std.time.ns_per_us),
@@ -394,7 +394,7 @@ pub const Connection = struct {
         }
         _ = xlib.XFree(@ptrCast(configs));
 
-        log.info("GLX texture binding enabled", .{});
+        log.debug("GLX texture binding enabled", .{});
 
         return Connection{
             .display = display,
@@ -892,7 +892,7 @@ pub fn grabAltTab(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) void {
     }
 
     _ = xcb.xcb_flush(conn);
-    log.info("Alt+Tab grabbed", .{});
+    log.debug("Alt+Tab grabbed", .{});
 }
 
 /// Release all passive Alt+Tab key grabs.
@@ -933,7 +933,7 @@ pub fn ungrabAltTab(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) void {
     }
 
     _ = xcb.xcb_flush(conn);
-    log.info("Alt+Tab ungrabbed", .{});
+    log.debug("Alt+Tab ungrabbed", .{});
 }
 
 /// Grab Win+Tab and Win+Shift+Tab passively on the root window.
@@ -966,7 +966,7 @@ pub fn grabWinTab(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) void {
     }
 
     _ = xcb.xcb_flush(conn);
-    log.info("Win+Tab grabbed", .{});
+    log.debug("Win+Tab grabbed", .{});
 }
 
 /// Release all passive Win+Tab key grabs.
@@ -995,7 +995,7 @@ pub fn ungrabWinTab(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) void {
     }
 
     _ = xcb.xcb_flush(conn);
-    log.info("Win+Tab ungrabbed", .{});
+    log.debug("Win+Tab ungrabbed", .{});
 }
 
 /// Actively grab the keyboard so ALL key events go to us during switching.
@@ -1012,7 +1012,7 @@ pub fn grabKeyboard(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) bool {
     const reply = xcb.xcb_grab_keyboard_reply(conn, cookie, null);
     const elapsed_us = @divTrunc(std.time.nanoTimestamp() - start_ns, std.time.ns_per_us);
     if (elapsed_us >= 2_000) {
-        log.warn("profile grabKeyboard slow: {d}us", .{elapsed_us});
+        log.debug("profile grabKeyboard slow: {d}us", .{elapsed_us});
     } else {
         log.debug("grabKeyboard round-trip: {d}us", .{elapsed_us});
     }

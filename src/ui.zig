@@ -257,28 +257,69 @@ fn utf8PrefixLen(text: []const u8, max_len: usize) usize {
     return i;
 }
 
+
+fn isFontFile(name: []const u8) bool {
+    return std.mem.endsWith(u8, name, ".ttf") or
+        std.mem.endsWith(u8, name, ".otf") or
+        std.mem.endsWith(u8, name, ".ttc");
+}
+
+fn fontNameMatches(name: []const u8, needles: []const []const u8) bool {
+    for (needles) |needle| {
+        if (std.mem.indexOf(u8, name, needle) != null) return true;
+    }
+    return false;
+}
+
+fn tryLoadFontRecursive(
+    dir_path: []const u8,
+    depth: u8,
+    size: i32,
+    codepoints: [*c]c_int,
+    count: usize,
+    needles: []const []const u8,
+) ?rl.Font {
+    var dir = std.fs.openDirAbsolute(dir_path, .{ .iterate = true }) catch return null;
+    defer dir.close();
+
+    var it = dir.iterate();
+    while (it.next() catch null) |entry| {
+        var path_buf: [std.fs.max_path_bytes:0]u8 = undefined;
+        const full_path = std.fmt.bufPrintZ(&path_buf, "{s}/{s}", .{ dir_path, entry.name }) catch continue;
+
+        if (entry.kind == .directory and depth > 0) {
+            if (tryLoadFontRecursive(full_path, depth - 1, size, codepoints, count, needles)) |font| return font;
+        } else if (entry.kind == .file and isFontFile(entry.name) and fontNameMatches(entry.name, needles)) {
+            if (tryLoadFont(full_path.ptr, size, codepoints, count)) |font| return font;
+        }
+    }
+
+    return null;
+}
+
 pub fn loadSystemFont(size: i32) rl.Font {
     const font_paths = [_][*c]const u8{
-        // Prefer Noto Sans CJK: good Latin rendering and full Chinese coverage.
+        // Prefer CJK fonts with decent Latin glyphs.
         "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/noto-cjk/NotoSansSC-Regular.otf",
+        "/usr/share/fonts/adobe-source-han-sans/SourceHanSansSC-Regular.otf",
+        "/usr/share/fonts/source-han-sans/SourceHanSansSC-Regular.otf",
 
-        // WenQuanYi is fallback only; its Latin glyphs are rougher.
-        "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
+        // WenQuanYi fallback. MicroHei looks cleaner than ZenHei bitmap glyphs.
         "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+        "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
 
         // Last-resort Latin/symbol fonts.
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
         "/usr/share/fonts/noto/NotoEmoji-Regular.ttf",
         "/usr/share/fonts/truetype/ancient-scripts/Symbola.ttf",
@@ -311,6 +352,7 @@ pub fn loadSystemFont(size: i32) rl.Font {
         .{ 0x2300, 0x23FF }, // Miscellaneous Technical
         .{ 0x2460, 0x24FF }, // Enclosed Alphanumerics
         .{ 0x2500, 0x257F }, // Box Drawing
+        .{ 0x25A0, 0x25FF }, // Geometric Shapes
         .{ 0x2600, 0x26FF }, // Miscellaneous Symbols
         .{ 0x2700, 0x27BF }, // Dingbats
         .{ 0xE000, 0xF8FF }, // Private Use Area (Nerd Fonts)
@@ -327,24 +369,26 @@ pub fn loadSystemFont(size: i32) rl.Font {
         }
     }
 
-    // Prefer per-user Noto CJK first. Do not hard-code /home/user.
+    // Prefer per-user fonts without hard-coding /home/user.
+    // The recursive scan covers ~/.local/share/fonts/noto-cjk and ~/.local/share/fonts/wenquanyi.
+    const cjk_preferred = [_][]const u8{
+        "NotoSansCJK",
+        "NotoSansSC",
+        "SourceHanSans",
+        "wqy-microhei",
+        "wqy-zenhei",
+    };
+
     if (std.process.getEnvVarOwned(std.heap.page_allocator, "HOME")) |home| {
         defer std.heap.page_allocator.free(home);
-
-        const home_font_paths = [_][]const u8{
-            ".local/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
-            ".local/share/fonts/noto-cjk/NotoSansSC-Regular.otf",
-            ".local/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
-            ".local/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
-        };
-
-        for (home_font_paths) |rel_path| {
-            var path_buf: [std.fs.max_path_bytes:0]u8 = undefined;
-            if (std.fmt.bufPrintZ(&path_buf, "{s}/{s}", .{ home, rel_path })) |path| {
-                if (tryLoadFont(path.ptr, size, &codepoints[0], count)) |font| return font;
-            } else |_| {}
-        }
+        var local_fonts_buf: [std.fs.max_path_bytes:0]u8 = undefined;
+        if (std.fmt.bufPrintZ(&local_fonts_buf, "{s}/.local/share/fonts", .{home})) |local_fonts| {
+            if (tryLoadFontRecursive(local_fonts, 4, size, &codepoints[0], count, cjk_preferred[0..])) |font| return font;
+        } else |_| {}
     } else |_| {}
+
+
+    if (tryLoadFontRecursive("/usr/share/fonts", 4, size, &codepoints[0], count, cjk_preferred[0..])) |font| return font;
 
     for (font_paths) |path| {
         if (tryLoadFont(path, size, &codepoints[0], count)) |font| return font;

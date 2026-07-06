@@ -89,8 +89,6 @@ fn runDaemon() !void {
         return err;
     };
 
-    try stdout.print("Waiting for initial window scan...\n", .{});
-
     if (!task_queue.waitForFirstScan(10000)) {
         try stdout.print("Timeout waiting for worker scan.\n", .{});
         task_queue.requestStop();
@@ -98,8 +96,6 @@ fn runDaemon() !void {
         task_queue.deinit();
         return;
     }
-
-    try stdout.print("Initial scan complete.\n", .{});
 
     // Initialize app in daemon mode (window created but hidden)
     // App init drains the queue for initial windows
@@ -145,28 +141,35 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
         switch (response_type) {
             x11.xcb.XCB_KEY_PRESS => {
                 const key_event: *x11.xcb.xcb_key_press_event_t = @ptrCast(event);
-                const keysym = x11.keycodeToKeysym(conn, key_event.detail, 0);
+                const base_keysym = x11.keycodeToKeysym(conn, key_event.detail, 0);
+                const shifted_keysym = x11.keycodeToKeysym(conn, key_event.detail, 1);
                 const state_mask = key_event.state;
 
                 const is_shift = (state_mask & x11.MOD_SHIFT) != 0;
                 const is_super = (state_mask & x11.MOD_SUPER) != 0;
                 const is_alt = (state_mask & x11.MOD_ALT) != 0;
 
-                if (keysym == x11.XK_Tab and is_super and !is_alt) {
+                // Some X layouts report Shift+Tab as ISO_Left_Tab, others keep the
+                // same Tab keycode and only set the Shift modifier. Treat both as Tab.
+                const is_tab_key = base_keysym == x11.XK_Tab or
+                    base_keysym == x11.XK_ISO_Left_Tab or
+                    shifted_keysym == x11.XK_Tab or
+                    shifted_keysym == x11.XK_ISO_Left_Tab;
+
+                if (is_tab_key and is_super and !is_alt) {
                     // Super+Tab (no Alt): same-app switcher — works in both idle and switching states
-                    application.handleWinTab(is_shift);
+                    application.handleWinTab(is_shift or shifted_keysym == x11.XK_ISO_Left_Tab);
                 } else if (application.state == .idle) {
-                    // Idle: only respond to Alt+Tab / Alt+Shift+Tab
-                    if (keysym == x11.XK_Tab or keysym == x11.XK_ISO_Left_Tab) {
-                        application.handleAltTab(is_shift or keysym == x11.XK_ISO_Left_Tab);
+                    // Idle: respond to Alt+Tab / Alt+Shift+Tab. Passive grabs guarantee Alt.
+                    if (is_tab_key) {
+                        application.handleAltTab(is_shift or base_keysym == x11.XK_ISO_Left_Tab or shifted_keysym == x11.XK_ISO_Left_Tab);
                     }
                 } else {
-                    // Switching: forward all key presses
-                    // For Tab with Shift held, also check ISO_Left_Tab
-                    const effective_keysym = if (keysym == x11.XK_Tab and is_shift)
-                        x11.XK_ISO_Left_Tab
+                    // Switching: normalize Tab keycodes so Alt+Shift+Tab always means previous.
+                    const effective_keysym = if (is_tab_key)
+                        if (is_shift or shifted_keysym == x11.XK_ISO_Left_Tab) x11.XK_ISO_Left_Tab else x11.XK_Tab
                     else
-                        keysym;
+                        base_keysym;
                     _ = application.handleKeyEvent(effective_keysym, true);
                 }
             },
