@@ -156,17 +156,17 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
 
                 if (is_tab_key and is_super and !is_alt) {
                     // Super+Tab (no Alt): same-app switcher — works in both idle and switching states
-                    application.handleWinTab(is_shift or shifted_keysym == x11.XK_ISO_Left_Tab);
+                    application.handleWinTab(is_shift or base_keysym == x11.XK_ISO_Left_Tab);
                 } else if (application.state == .idle) {
                     // Idle: respond to Alt+Tab / Alt+Shift+Tab. Passive grabs guarantee Alt.
                     if (is_tab_key) {
-                        application.handleAltTab(is_shift or base_keysym == x11.XK_ISO_Left_Tab or shifted_keysym == x11.XK_ISO_Left_Tab);
+                        application.handleAltTab(is_shift or base_keysym == x11.XK_ISO_Left_Tab);
                     }
                 } else {
                     // Switching: normalize Tab keycodes so Alt+Shift+Tab always means previous.
                     var effective_keysym = base_keysym;
                     if (is_tab_key) {
-                        effective_keysym = if (is_shift or shifted_keysym == x11.XK_ISO_Left_Tab)
+                        effective_keysym = if (is_shift or base_keysym == x11.XK_ISO_Left_Tab)
                             x11.XK_ISO_Left_Tab
                         else
                             x11.XK_Tab;

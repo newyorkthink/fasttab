@@ -638,16 +638,26 @@ pub const App = struct {
             return;
         }
 
+        const active_win = x11.getActiveWindow(self.conn.conn, self.conn.root, self.conn.atoms);
+        if (active_win != 0) {
+            self.recordMruActivation(active_win);
+        }
+
         self.reorderByMru();
 
         const n = self.items.items.len;
         if (n == 0) {
             self.selected_index = 0;
+        } else if (active_win != 0 and self.findItemIndexByWindowId(active_win)) |current_idx| {
+            // Alt+Tab opens on the real current window.
+            // Alt+Shift+Tab starts one slot before it for reverse navigation.
+            self.selected_index = if (shift)
+                (if (current_idx == 0) n - 1 else current_idx - 1)
+            else
+                current_idx;
         } else if (shift) {
-            // Alt+Shift+Tab starts from the last item for reverse navigation.
             self.selected_index = n - 1;
         } else {
-            // Show the current active window first.  Pressing Tab then moves to the next item.
             self.selected_index = 0;
         }
 
@@ -1199,6 +1209,15 @@ pub const App = struct {
         for (self.items.items) |*item| {
             if (item.id == wid) {
                 return item;
+            }
+        }
+        return null;
+    }
+
+    fn findItemIndexByWindowId(self: *Self, wid: x11.xcb.xcb_window_t) ?usize {
+        for (self.items.items, 0..) |item, i| {
+            if (item.id == wid) {
+                return i;
             }
         }
         return null;
