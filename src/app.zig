@@ -383,6 +383,10 @@ pub const App = struct {
                                 var tex = entry.value;
                                 tex.deinit(self.conn);
                             }
+                            if (item.cached_snapshot) |snapshot| {
+                                rl.UnloadRenderTexture(snapshot);
+                                item.cached_snapshot = null;
+                            }
                             self.allocator.free(item.title);
                             self.allocator.free(item.icon_id);
                             _ = self.items.orderedRemove(i);
@@ -594,6 +598,10 @@ pub const App = struct {
         self.focus_grace_frames = 5;
         self.window_hidden = false;
         self.mouse_left_was_down = false;
+
+        // Force a fresh composite pixmap for mapped windows every time the switcher opens.
+        // This prevents stale previews after an app changes content while FastTab is hidden.
+        self.forceRefreshViewableThumbnailsForShow();
 
         self.reacquire_pending = self.hasPendingReacquire();
         self.reacquire_cursor = if (self.items.items.len > 0) self.selected_index % self.items.items.len else 0;
@@ -986,6 +994,24 @@ pub const App = struct {
         log.debug("Released {d} GLX bindings", .{self.window_textures.count()});
     }
 
+    /// Mark currently viewable windows stale so the next frame reacquires fresh composite pixmaps.
+    /// Unmapped/i3 other-workspace windows are left alone so their old fallback preview is preserved.
+    fn forceRefreshViewableThumbnailsForShow(self: *Self) void {
+        for (self.items.items) |*item| {
+            if (!x11.isWindowViewable(self.conn.conn, item.id)) continue;
+
+            if (item.cached_snapshot) |snapshot| {
+                rl.UnloadRenderTexture(snapshot);
+                item.cached_snapshot = null;
+            }
+
+            item.thumbnail_ready = false;
+            if (self.window_textures.getPtr(item.id)) |tex| {
+                tex.release(self.conn);
+            }
+        }
+    }
+
     /// Cache snapshots of all live thumbnails into RenderTextures before releasing GLX bindings.
     /// Uses the downsample shader to render each live GLX texture into a per-window FBO at display size.
     fn cacheAllSnapshots(self: *Self) void {
@@ -1062,6 +1088,14 @@ pub const App = struct {
 
             if (self.window_textures.getPtr(target_id)) |tex| {
                 if (!tex.reacquire(self.conn)) {
+                    // Minimized/unmapped windows cannot always produce a composite pixmap.
+                    // Keep them tracked and let the UI fall back to icon/cached preview.
+                    if (!x11.isWindowViewable(self.conn.conn, target_id)) {
+                        self.markThumbnailReady(target_id, false);
+                        failed_count += 1;
+                        continue;
+                    }
+
                     to_remove.append(target_id) catch continue;
                     self.markThumbnailReady(target_id, true);
                     failed_count += 1;

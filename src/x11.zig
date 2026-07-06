@@ -761,6 +761,22 @@ pub fn isWindowOnCurrentDesktop(
     return window_desktop == current_desktop;
 }
 
+/// Check whether a window is currently mapped/viewable.
+/// False means unmapped, minimized, on another i3 workspace, or already gone.
+pub fn isWindowViewable(conn: *xcb.xcb_connection_t, window: xcb.xcb_window_t) bool {
+    const cookie = xcb.xcb_get_window_attributes(conn, window);
+    var err: ?*xcb.xcb_generic_error_t = null;
+    const reply = xcb.xcb_get_window_attributes_reply(conn, cookie, &err);
+    if (err) |e| {
+        std.c.free(e);
+        return false;
+    }
+    if (reply == null) return false;
+    defer std.c.free(reply);
+
+    return reply.*.map_state == xcb.XCB_MAP_STATE_VIEWABLE;
+}
+
 pub fn getMousePosition(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) MousePosition {
     const cookie = xcb.xcb_query_pointer(conn, root);
     const reply = xcb.xcb_query_pointer_reply(conn, cookie, null);
