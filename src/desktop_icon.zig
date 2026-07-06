@@ -196,8 +196,13 @@ fn loadPng(path: []const u8) !IconResult {
     var height: i32 = 0;
     var channels: i32 = 0;
 
+    // stb_image expects a null-terminated C string. fs.path.join returns a normal slice,
+    // so copying into a sentinel buffer avoids random icon-load failures or over-read.
+    var path_buf: [std.fs.max_path_bytes:0]u8 = undefined;
+    const zpath = try std.fmt.bufPrintZ(&path_buf, "{s}", .{path});
+
     // We force 4 channels to ensure we get RGBA/ARGB consistently
-    const data = c.stbi_load(path.ptr, &width, &height, &channels, 4);
+    const data = c.stbi_load(zpath.ptr, &width, &height, &channels, 4);
     if (data == null) return error.StbLoadError;
 
     return IconResult{
