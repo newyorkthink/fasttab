@@ -648,13 +648,19 @@ pub const App = struct {
         const n = self.items.items.len;
         if (n == 0) {
             self.selected_index = 0;
-        } else if (active_win != 0 and self.findItemIndexByWindowId(active_win)) |current_idx| {
-            // Alt+Tab opens on the real current window.
-            // Alt+Shift+Tab starts one slot before it for reverse navigation.
-            self.selected_index = if (shift)
-                (if (current_idx == 0) n - 1 else current_idx - 1)
-            else
-                current_idx;
+        } else if (active_win != 0) {
+            if (self.findItemIndexByWindowId(active_win)) |current_idx| {
+                // Alt+Tab opens on the real current window.
+                // Alt+Shift+Tab starts one slot before it for reverse navigation.
+                self.selected_index = if (shift)
+                    (if (current_idx == 0) n - 1 else current_idx - 1)
+                else
+                    current_idx;
+            } else if (shift) {
+                self.selected_index = n - 1;
+            } else {
+                self.selected_index = 0;
+            }
         } else if (shift) {
             self.selected_index = n - 1;
         } else {
