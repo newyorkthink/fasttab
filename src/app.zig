@@ -152,7 +152,7 @@ pub const App = struct {
 
         self.drainUpdateQueue();
 
-        log.info("App initialized: {d} windows tracked", .{self.items.items.len});
+        log.debug("App initialized: {d} windows tracked", .{self.items.items.len});
 
         return self;
     }
@@ -252,13 +252,15 @@ pub const App = struct {
         }
 
         // Handle mouse input first.
-        // In i3, clicking the switcher may briefly make raylib think the window lost focus.
-        // If focus-loss is handled before mouse input, clicks can be ignored.
+        // In i3/raylib, click press events can be missed when the switcher just gained focus,
+        // so accept both Pressed and Down.
+        const mouse_down = rl.IsMouseButtonDown(rl.MOUSE_BUTTON_LEFT);
+        const mouse_pressed = rl.IsMouseButtonPressed(rl.MOUSE_BUTTON_LEFT);
         const mouse_pos = rl.GetMousePosition();
         if (ui.getItemAtPosition(self.displayItems(), self.current_layout, mouse_pos)) |idx| {
             rl.SetMouseCursor(rl.MOUSE_CURSOR_POINTING_HAND);
             self.mouseover_index = idx;
-            if (rl.IsMouseButtonPressed(rl.MOUSE_BUTTON_LEFT)) {
+            if (mouse_pressed or mouse_down) {
                 self.selected_index = idx;
                 self.confirmSwitching();
                 return;
@@ -268,10 +270,11 @@ pub const App = struct {
             self.mouseover_index = null;
         }
 
-        // Cancel switching if window loses focus (e.g., clicked outside)
+        // Cancel switching if window loses focus.
+        // Do not cancel while the user is holding the mouse button; otherwise i3 can drop the click.
         if (self.focus_grace_frames > 0) {
             self.focus_grace_frames -= 1;
-        } else if (self.state == .switching and !rl.IsWindowFocused()) {
+        } else if (self.state == .switching and !mouse_down and !rl.IsWindowFocused()) {
             self.cancelSwitching();
             return;
         }
@@ -448,7 +451,7 @@ pub const App = struct {
 
                 // If all same-app windows disappear while the user is switching, cancel cleanly.
                 if (self.state == .switching and self.filtered_items.items.len == 0) {
-                    log.info("All same-app windows removed during switching, cancelling", .{});
+                    log.debug("All same-app windows removed during switching, cancelling", .{});
                     self.cancelSwitching(); // ungrabs keyboard, hides window, resets switch_mode
                     return;
                 }
@@ -585,7 +588,7 @@ pub const App = struct {
 
         const total_us = @divTrunc(after_focus_ns - start_ns, std.time.ns_per_us);
         if (total_us >= PROFILE_SLOW_SHOW_WINDOW_US) {
-            log.info(
+            log.debug(
                 "profile showWindow(us): total={d} notify={d} layout={d} monitor={d} map={d} size={d} position={d} focus={d}",
                 .{
                     total_us,
@@ -640,7 +643,7 @@ pub const App = struct {
         // mapping the window, avoiding the show/hide race during rapid Alt+Tab.
         self.show_delay_frames = SHOW_DELAY_FRAMES;
         self.state = .switching;
-        log.info("Alt+Tab switching started (shift={}, selected={d})", .{ shift, self.selected_index });
+        log.debug("Alt+Tab switching started (shift={}, selected={d})", .{ shift, self.selected_index });
     }
 
     /// Handle Win+Tab press: start (or cycle) same-app switching.
@@ -682,7 +685,7 @@ pub const App = struct {
         self.buildFilteredItems();
 
         if (self.filtered_items.items.len <= 1) {
-            log.info("Win+Tab: {d} window(s) for '{s}', nothing to switch", .{ self.filtered_items.items.len, class });
+            log.debug("Win+Tab: {d} window(s) for '{s}', nothing to switch", .{ self.filtered_items.items.len, class });
             x11.ungrabKeyboard(self.conn.conn);
             self.resetSwitchMode();
             return;
@@ -692,7 +695,7 @@ pub const App = struct {
         self.selected_index = if (shift) n - 1 else 1;
         self.show_delay_frames = SHOW_DELAY_FRAMES;
         self.state = .switching;
-        log.info("Win+Tab switching started: class='{s}' count={d} shift={} selected={d}", .{
+        log.debug("Win+Tab switching started: class='{s}' count={d} shift={} selected={d}", .{
             class, n, shift, self.selected_index,
         });
     }
@@ -773,7 +776,7 @@ pub const App = struct {
         if (display.len > 0 and self.selected_index < display.len) {
             const selected_id = display[self.selected_index].id;
             x11.activateWindow(self.conn.conn, self.conn.root, selected_id, self.conn.atoms);
-            log.info("Confirmed: activating window {x}", .{selected_id});
+            log.debug("Confirmed: activating window {x}", .{selected_id});
         }
         const after_activate_ns = std.time.nanoTimestamp();
 
@@ -791,7 +794,7 @@ pub const App = struct {
         self.tab_pressed_during_shift = false;
         self.resetSwitchMode();
 
-        log.info(
+        log.debug(
             "profile confirmSwitching(us): total={d} activate={d} ungrab={d} hide={d}",
             .{
                 @divTrunc(after_hide_ns - start_ns, std.time.ns_per_us),
@@ -807,7 +810,7 @@ pub const App = struct {
         if (self.state != .switching) return;
 
         const start_ns = std.time.nanoTimestamp();
-        log.info("Switching cancelled", .{});
+        log.debug("Switching cancelled", .{});
         x11.ungrabKeyboard(self.conn.conn);
         const after_ungrab_ns = std.time.nanoTimestamp();
 
@@ -822,7 +825,7 @@ pub const App = struct {
         self.tab_pressed_during_shift = false;
         self.resetSwitchMode();
 
-        log.info(
+        log.debug(
             "profile cancelSwitching(us): total={d} ungrab={d} hide={d}",
             .{
                 @divTrunc(after_hide_ns - start_ns, std.time.ns_per_us),
@@ -842,7 +845,7 @@ pub const App = struct {
 
             if (!tex.rebind(self.conn)) {
                 // Rebind failed — pixmap is stale, try to reacquire a fresh one
-                log.info("GLX rebind failed for window {x}, reacquiring pixmap", .{drawable});
+                log.debug("GLX rebind failed for window {x}, reacquiring pixmap", .{drawable});
                 tex.invalidate(self.conn);
                 if (!tex.reacquire(self.conn)) {
                     // Window is truly gone — destroy texture and remove from items

@@ -232,6 +232,10 @@ pub fn loadTextureFromThumbnail(thumb: *const thumbnail.Thumbnail) rl.Texture2D 
 
 pub fn loadSystemFont(size: i32) rl.Font {
     const font_paths = [_][*c]const u8{
+        "/home/user/.local/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
+        "/home/user/.local/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+        "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
+        "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
         "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
