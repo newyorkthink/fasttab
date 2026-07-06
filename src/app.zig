@@ -311,13 +311,6 @@ pub const App = struct {
 
                             if (self.window_textures.contains(data.window_id)) {
                                 has_texture = true;
-
-                                // Release binding immediately if hidden so other compositors can use the pixmap
-                                if (self.window_hidden) {
-                                    if (self.window_textures.getPtr(data.window_id)) |stored_tex| {
-                                        stored_tex.release(self.conn);
-                                    }
-                                }
                             }
                         } else |err| {
                             log.warn("GLX texture failed for {x}: {}, showing icon fallback", .{ data.window_id, err });
@@ -513,6 +506,7 @@ pub const App = struct {
         self.reacquire_pending = false;
 
         // i3: keep GLX pixmap bindings alive, otherwise other workspace thumbnails fall back to icons.
+        self.cacheAllSnapshots();
         const after_snapshot_ns = std.time.nanoTimestamp();
         const after_release_ns = after_snapshot_ns;
 
