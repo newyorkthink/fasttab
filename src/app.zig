@@ -270,7 +270,7 @@ pub const App = struct {
         if (ui.getItemAtPosition(self.displayItems(), self.current_layout, mouse_pos)) |idx| {
             rl.SetMouseCursor(rl.MOUSE_CURSOR_POINTING_HAND);
             self.mouseover_index = idx;
-            if (mouse_pressed) {
+            if (mouse_pressed or mouse_released) {
                 self.selected_index = idx;
                 self.confirmSwitching();
                 return;
