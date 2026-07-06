@@ -151,6 +151,8 @@ pub const Atoms = struct {
     net_wm_state: xcb.xcb_atom_t,
     net_wm_state_hidden: xcb.xcb_atom_t,
     net_current_desktop: xcb.xcb_atom_t,
+    net_number_of_desktops: xcb.xcb_atom_t,
+    net_desktop_names: xcb.xcb_atom_t,
     net_wm_desktop: xcb.xcb_atom_t,
     net_wm_pid: xcb.xcb_atom_t,
     net_client_list_stacking: xcb.xcb_atom_t,
@@ -499,6 +501,8 @@ fn initAtoms(conn: *xcb.xcb_connection_t) X11Error!Atoms {
         .net_wm_state = try internAtom(conn, "_NET_WM_STATE"),
         .net_wm_state_hidden = try internAtom(conn, "_NET_WM_STATE_HIDDEN"),
         .net_current_desktop = try internAtom(conn, "_NET_CURRENT_DESKTOP"),
+        .net_number_of_desktops = try internAtom(conn, "_NET_NUMBER_OF_DESKTOPS"),
+        .net_desktop_names = try internAtom(conn, "_NET_DESKTOP_NAMES"),
         .net_wm_desktop = try internAtom(conn, "_NET_WM_DESKTOP"),
         .net_wm_pid = try internAtom(conn, "_NET_WM_PID"),
         .net_client_list_stacking = try internAtom(conn, "_NET_CLIENT_LIST_STACKING"),
@@ -719,6 +723,120 @@ fn getCurrentDesktop(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t, atoms:
 
     const data: *const u32 = @ptrCast(@alignCast(xcb.xcb_get_property_value(reply)));
     return data.*;
+}
+
+
+fn getNumberOfDesktops(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t, atoms: Atoms) ?u32 {
+    const cookie = xcb.xcb_get_property(conn, 0, root, atoms.net_number_of_desktops, xcb.XCB_ATOM_CARDINAL, 0, 1);
+    const reply = xcb.xcb_get_property_reply(conn, cookie, null);
+    if (reply == null) return null;
+    defer std.c.free(reply);
+
+    const len = xcb.xcb_get_property_value_length(reply);
+    if (len < @sizeOf(u32)) return null;
+
+    const data: *const u32 = @ptrCast(@alignCast(xcb.xcb_get_property_value(reply)));
+    return data.*;
+}
+
+pub const WorkspaceInfo = struct {
+    names: [][]u8,
+    current: ?u32,
+    allocator: std.mem.Allocator,
+
+    pub fn deinit(self: *WorkspaceInfo) void {
+        for (self.names) |name| {
+            self.allocator.free(name);
+        }
+        self.allocator.free(self.names);
+    }
+};
+
+/// Read EWMH/i3 workspace names from the root window.
+/// Names are NUL-separated UTF-8 strings in _NET_DESKTOP_NAMES.
+pub fn getWorkspaceInfo(
+    allocator: std.mem.Allocator,
+    conn: *xcb.xcb_connection_t,
+    root: xcb.xcb_window_t,
+    atoms: Atoms,
+) WorkspaceInfo {
+    const current = getCurrentDesktop(conn, root, atoms);
+    const desktop_count = getNumberOfDesktops(conn, root, atoms) orelse 0;
+
+    const cookie = xcb.xcb_get_property(conn, 0, root, atoms.net_desktop_names, atoms.utf8_string, 0, 8192);
+    const reply = xcb.xcb_get_property_reply(conn, cookie, null);
+    if (reply == null) {
+        return fallbackWorkspaceInfo(allocator, desktop_count, current);
+    }
+    defer std.c.free(reply);
+
+    const len = xcb.xcb_get_property_value_length(reply);
+    if (len <= 0) {
+        return fallbackWorkspaceInfo(allocator, desktop_count, current);
+    }
+
+    const raw: [*]const u8 = @ptrCast(xcb.xcb_get_property_value(reply));
+    const data = raw[0..@intCast(len)];
+
+    var list = std.ArrayList([]u8).init(allocator);
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i <= data.len) : (i += 1) {
+        if (i == data.len or data[i] == 0) {
+            if (i > start) {
+                const name = allocator.dupe(u8, data[start..i]) catch break;
+                list.append(name) catch {
+                    allocator.free(name);
+                    break;
+                };
+            }
+            start = i + 1;
+        }
+    }
+
+    if (list.items.len == 0) {
+        list.deinit();
+        return fallbackWorkspaceInfo(allocator, desktop_count, current);
+    }
+
+    return WorkspaceInfo{
+        .names = list.toOwnedSlice() catch blk: {
+            for (list.items) |name| allocator.free(name);
+            list.deinit();
+            break :blk allocator.alloc([]u8, 0) catch unreachable;
+        },
+        .current = current,
+        .allocator = allocator,
+    };
+}
+
+fn fallbackWorkspaceInfo(allocator: std.mem.Allocator, desktop_count: u32, current: ?u32) WorkspaceInfo {
+    if (desktop_count == 0) {
+        return WorkspaceInfo{
+            .names = allocator.alloc([]u8, 0) catch unreachable,
+            .current = current,
+            .allocator = allocator,
+        };
+    }
+
+    var names = allocator.alloc([]u8, @intCast(desktop_count)) catch {
+        return WorkspaceInfo{
+            .names = allocator.alloc([]u8, 0) catch unreachable,
+            .current = current,
+            .allocator = allocator,
+        };
+    };
+
+    var i: usize = 0;
+    while (i < names.len) : (i += 1) {
+        names[i] = std.fmt.allocPrint(allocator, "{d}", .{i + 1}) catch allocator.dupe(u8, "?") catch unreachable;
+    }
+
+    return WorkspaceInfo{
+        .names = names,
+        .current = current,
+        .allocator = allocator,
+    };
 }
 
 /// Get the desktop number a window is on (0xFFFFFFFF means "all desktops")

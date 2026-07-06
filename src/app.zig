@@ -62,6 +62,8 @@ pub const App = struct {
     reacquire_pending: bool,
     reacquire_cursor: usize,
     mru_list: std.ArrayList(x11.xcb.xcb_window_t),
+    workspace_names: std.ArrayList([]u8),
+    current_workspace: ?u32,
 
     // Shift-tap tracking: press-and-release Shift (without Tab) selects previous window
     shift_held: bool,
@@ -114,6 +116,7 @@ pub const App = struct {
         };
 
         var mru_list = std.ArrayList(x11.xcb.xcb_window_t).init(allocator);
+        const workspace_names = std.ArrayList([]u8).init(allocator);
 
         // Seed MRU list with the currently active window (single entry)
         const initial_active = x11.getActiveWindow(conn.conn, conn.root, conn.atoms);
@@ -145,6 +148,8 @@ pub const App = struct {
             .reacquire_pending = false,
             .reacquire_cursor = 0,
             .mru_list = mru_list,
+            .workspace_names = workspace_names,
+            .current_workspace = null,
             .shift_held = false,
             .tab_pressed_during_shift = false,
             .switch_mode = .all_windows,
@@ -200,6 +205,9 @@ pub const App = struct {
             task.deinit();
         }
         self.temp_tasks.deinit();
+
+        self.clearWorkspaceInfo();
+        self.workspace_names.deinit();
 
         self.mru_list.deinit();
 
@@ -267,7 +275,7 @@ pub const App = struct {
         const mouse_pressed = mouse_state.left_down and !self.mouse_left_was_down;
         const mouse_released = !mouse_state.left_down and self.mouse_left_was_down;
 
-        if (ui.getItemAtPosition(self.displayItems(), self.current_layout, mouse_pos)) |idx| {
+        if (ui.getItemAtPosition(self.displayItems(), self.current_layout, mouse_pos, ui.workspaceBarOffset(self.workspace_names.items))) |idx| {
             rl.SetMouseCursor(rl.MOUSE_CURSOR_POINTING_HAND);
             self.mouseover_index = idx;
             if (mouse_pressed or mouse_released) {
@@ -571,8 +579,11 @@ pub const App = struct {
         }
         const after_notify_ns = std.time.nanoTimestamp();
 
+        self.refreshWorkspaceInfo();
+
         // Recalculate layout
         self.current_layout = ui.calculateBestLayout(self.displayItems());
+        ui.addWorkspaceBarToLayout(&self.current_layout, self.workspace_names.items);
         const after_layout_ns = std.time.nanoTimestamp();
 
         // Query current mouse position and find monitor
@@ -1406,6 +1417,30 @@ pub const App = struct {
         }
     }
 
+    fn clearWorkspaceInfo(self: *Self) void {
+        for (self.workspace_names.items) |name| {
+            self.allocator.free(name);
+        }
+        self.workspace_names.clearRetainingCapacity();
+        self.current_workspace = null;
+    }
+
+    fn refreshWorkspaceInfo(self: *Self) void {
+        self.clearWorkspaceInfo();
+
+        var info = x11.getWorkspaceInfo(self.allocator, self.conn.conn, self.conn.root, self.conn.atoms);
+        defer info.deinit();
+
+        self.current_workspace = info.current;
+        for (info.names) |name| {
+            const owned = self.allocator.dupe(u8, name) catch continue;
+            self.workspace_names.append(owned) catch {
+                self.allocator.free(owned);
+                continue;
+            };
+        }
+    }
+
     fn render(self: *Self) void {
         // Keep filtered_items in sync with self.items before every draw.
         // processReacquireQueue() and handleDamageEvent() update self.items directly;
@@ -1419,7 +1454,16 @@ pub const App = struct {
         rl.BeginDrawing();
         rl.ClearBackground(rl.Color{ .r = 0, .g = 0, .b = 0, .a = 0 });
         const shader_ptr: ?*const ui.DownsampleShader = if (self.downsample_shader) |*s| s else null;
-        ui.renderSwitcher(self.displayItems(), self.current_layout, self.selected_index, self.mouseover_index, self.font, shader_ptr);
+        ui.renderSwitcher(
+            self.displayItems(),
+            self.current_layout,
+            self.selected_index,
+            self.mouseover_index,
+            self.font,
+            shader_ptr,
+            self.workspace_names.items,
+            self.current_workspace,
+        );
         rl.EndDrawing();
     }
 
@@ -1427,6 +1471,7 @@ pub const App = struct {
         const prev_width = self.current_layout.total_width;
         const prev_height = self.current_layout.total_height;
         self.current_layout = ui.calculateBestLayout(self.displayItems());
+        ui.addWorkspaceBarToLayout(&self.current_layout, self.workspace_names.items);
 
         if (!self.window_hidden and (self.current_layout.total_width != prev_width or self.current_layout.total_height != prev_height)) {
             rl.SetWindowSize(@intCast(self.current_layout.total_width), @intCast(self.current_layout.total_height));

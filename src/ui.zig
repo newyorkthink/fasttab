@@ -24,6 +24,14 @@ pub const HIGHLIGHT_COLOR_LINES = rl.Color{ .r = 0x3d, .g = 0xae, .b = 0xe9, .a 
 pub const HIGHLIGHT_COLOR_LESS = rl.Color{ .r = 0x2d, .g = 0x8e, .b = 0xc9, .a = 64 };
 pub const HIGHLIGHT_COLOR_LESS_LINES = rl.Color{ .r = 0x3d, .g = 0xae, .b = 0xe9, .a = 128 };
 pub const TITLE_COLOR = rl.Color{ .r = 255, .g = 255, .b = 255, .a = 255 };
+pub const WORKSPACE_BAR_HEIGHT: u32 = 24;
+pub const WORKSPACE_BAR_SPACING: u32 = 8;
+pub const WORKSPACE_FONT_SIZE: i32 = 14;
+pub const WORKSPACE_ITEM_PADDING_X: u32 = 8;
+pub const WORKSPACE_ITEM_SPACING: u32 = 6;
+pub const WORKSPACE_CURRENT_BG = rl.Color{ .r = 0x2d, .g = 0x8e, .b = 0xc9, .a = 160 };
+pub const WORKSPACE_CURRENT_BORDER = rl.Color{ .r = 0x3d, .g = 0xae, .b = 0xe9, .a = 255 };
+pub const WORKSPACE_TEXT_COLOR = rl.Color{ .r = 255, .g = 255, .b = 255, .a = 235 };
 pub const ROUNDNESS: f32 = 0.08;
 
 // Icon overlay constants
@@ -181,7 +189,7 @@ pub fn calculateRowWidth(items: []DisplayWindow, start_idx: u32, count: u32) u32
     return width;
 }
 
-pub fn getItemAtPosition(items: []DisplayWindow, layout: GridLayout, mouse_pos: rl.Vector2) ?usize {
+pub fn getItemAtPosition(items: []DisplayWindow, layout: GridLayout, mouse_pos: rl.Vector2, top_offset: u32) ?usize {
     if (items.len == 0) return null;
 
     const item_full_height = layout.item_height + TITLE_SPACING + @as(u32, @intCast(TITLE_FONT_SIZE));
@@ -193,7 +201,7 @@ pub fn getItemAtPosition(items: []DisplayWindow, layout: GridLayout, mouse_pos: 
 
         const row_width = calculateRowWidth(items, @intCast(item_idx), items_in_row);
         var x: f32 = @floatFromInt(PADDING + (layout.total_width - 2 * PADDING - row_width) / 2);
-        const y: f32 = @floatFromInt(PADDING + row * (item_full_height + SPACING));
+        const y: f32 = @floatFromInt(PADDING + top_offset + row * (item_full_height + SPACING));
 
         var col: u32 = 0;
         while (col < items_in_row) : (col += 1) {
@@ -459,10 +467,91 @@ fn drawTruncatedText(font: rl.Font, text: []const u8, x: f32, y: f32, font_size:
     rl.DrawTextEx(font, text_ptr, rl.Vector2{ .x = @floor(text_x), .y = @floor(y) }, font_size, spacing, color);
 }
 
-pub fn renderSwitcher(items: []DisplayWindow, layout: GridLayout, selected_index: usize, mouseover_index: ?usize, font: rl.Font, downsample_shader: ?*const DownsampleShader) void {
+
+pub fn workspaceBarOffset(workspace_names: []const []const u8) u32 {
+    return if (workspace_names.len == 0) 0 else WORKSPACE_BAR_HEIGHT + WORKSPACE_BAR_SPACING;
+}
+
+pub fn addWorkspaceBarToLayout(layout: *GridLayout, workspace_names: []const []const u8) void {
+    layout.total_height += workspaceBarOffset(workspace_names);
+}
+
+fn measureUiText(font: rl.Font, text: []const u8, font_size: f32) rl.Vector2 {
+    var text_buf: [128]u8 = undefined;
+    const len = utf8PrefixLen(text, text_buf.len - 1);
+    @memcpy(text_buf[0..len], text[0..len]);
+    text_buf[len] = 0;
+    const text_ptr: [*c]const u8 = &text_buf;
+    return rl.MeasureTextEx(font, text_ptr, font_size, 1);
+}
+
+fn workspaceItemWidth(font: rl.Font, name: []const u8) u32 {
+    const measured = measureUiText(font, name, @floatFromInt(WORKSPACE_FONT_SIZE));
+    const text_w: u32 = if (measured.x < 1.0) 1 else @intFromFloat(@ceil(measured.x));
+    return text_w + WORKSPACE_ITEM_PADDING_X * 2;
+}
+
+fn drawWorkspaceBar(font: rl.Font, workspace_names: []const []const u8, current_workspace: ?u32, total_width: u32) void {
+    if (workspace_names.len == 0) return;
+
+    var bar_width: u32 = 0;
+    for (workspace_names, 0..) |name, i| {
+        bar_width += workspaceItemWidth(font, name);
+        if (i + 1 < workspace_names.len) bar_width += WORKSPACE_ITEM_SPACING;
+    }
+
+    const available_width = if (total_width > PADDING * 2) total_width - PADDING * 2 else total_width;
+    const start_x: f32 = if (bar_width <= available_width)
+        @floatFromInt((total_width - bar_width) / 2)
+    else
+        @floatFromInt(PADDING);
+
+    var x = start_x;
+    const y: f32 = @floatFromInt(PADDING);
+
+    for (workspace_names, 0..) |name, i| {
+        const item_w = workspaceItemWidth(font, name);
+        const rect = rl.Rectangle{
+            .x = x,
+            .y = y,
+            .width = @floatFromInt(item_w),
+            .height = @floatFromInt(WORKSPACE_BAR_HEIGHT),
+        };
+
+        if (current_workspace != null and current_workspace.? == i) {
+            rl.DrawRectangleRounded(rect, 0.25, 6, WORKSPACE_CURRENT_BG);
+            rl.DrawRectangleRoundedLinesEx(rect, 0.25, 6, 1, WORKSPACE_CURRENT_BORDER);
+        }
+
+        const text_y = y + @as(f32, @floatFromInt(WORKSPACE_BAR_HEIGHT - @as(u32, @intCast(WORKSPACE_FONT_SIZE)))) / 2.0;
+        drawTruncatedText(
+            font,
+            name,
+            x + @as(f32, @floatFromInt(WORKSPACE_ITEM_PADDING_X)),
+            text_y,
+            @floatFromInt(WORKSPACE_FONT_SIZE),
+            @floatFromInt(item_w - WORKSPACE_ITEM_PADDING_X * 2),
+            WORKSPACE_TEXT_COLOR,
+        );
+
+        x += @as(f32, @floatFromInt(item_w + WORKSPACE_ITEM_SPACING));
+    }
+}
+
+pub fn renderSwitcher(
+    items: []DisplayWindow,
+    layout: GridLayout,
+    selected_index: usize,
+    mouseover_index: ?usize,
+    font: rl.Font,
+    downsample_shader: ?*const DownsampleShader,
+    workspace_names: []const []const u8,
+    current_workspace: ?u32,
+) void {
     if (items.len == 0) return;
 
     const item_full_height = layout.item_height + TITLE_SPACING + @as(u32, @intCast(TITLE_FONT_SIZE));
+    const top_offset = workspaceBarOffset(workspace_names);
 
     const bg_rect = rl.Rectangle{
         .x = 0,
@@ -471,6 +560,7 @@ pub fn renderSwitcher(items: []DisplayWindow, layout: GridLayout, selected_index
         .height = @floatFromInt(layout.total_height),
     };
     rl.DrawRectangleRounded(bg_rect, ROUNDNESS, 16, BACKGROUND_COLOR);
+    drawWorkspaceBar(font, workspace_names, current_workspace, layout.total_width);
 
     var item_idx: usize = 0;
     var row: u32 = 0;
@@ -479,7 +569,7 @@ pub fn renderSwitcher(items: []DisplayWindow, layout: GridLayout, selected_index
 
         const row_width = calculateRowWidth(items, @intCast(item_idx), items_in_row);
         var x: f32 = @floatFromInt(PADDING + (layout.total_width - 2 * PADDING - row_width) / 2);
-        const y: f32 = @floatFromInt(PADDING + row * (item_full_height + SPACING));
+        const y: f32 = @floatFromInt(PADDING + top_offset + row * (item_full_height + SPACING));
 
         var col: u32 = 0;
         while (col < items_in_row) : (col += 1) {
