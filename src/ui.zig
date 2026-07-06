@@ -230,14 +230,46 @@ pub fn loadTextureFromThumbnail(thumb: *const thumbnail.Thumbnail) rl.Texture2D 
     return texture;
 }
 
+fn tryLoadFont(path: [*c]const u8, size: i32, codepoints: [*c]c_int, count: usize) ?rl.Font {
+    const font = rl.LoadFontEx(path, size, codepoints, @intCast(count));
+    if (font.texture.id != 0) {
+        rl.SetTextureFilter(font.texture, rl.TEXTURE_FILTER_BILINEAR);
+        return font;
+    }
+    return null;
+}
+
+fn utf8SequenceLength(first: u8) usize {
+    if (first < 0x80) return 1;
+    if ((first & 0xE0) == 0xC0) return 2;
+    if ((first & 0xF0) == 0xE0) return 3;
+    if ((first & 0xF8) == 0xF0) return 4;
+    return 1;
+}
+
+fn utf8PrefixLen(text: []const u8, max_len: usize) usize {
+    var i: usize = 0;
+    while (i < text.len and i < max_len) {
+        const seq_len = utf8SequenceLength(text[i]);
+        if (i + seq_len > text.len or i + seq_len > max_len) break;
+        i += seq_len;
+    }
+    return i;
+}
+
 pub fn loadSystemFont(size: i32) rl.Font {
     const font_paths = [_][*c]const u8{
-        "/home/user/.local/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
-        "/home/user/.local/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
-        "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
-        "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+        // Prefer Noto Sans CJK: good Latin rendering and full Chinese coverage.
         "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansSC-Regular.otf",
+
+        // WenQuanYi is fallback only; its Latin glyphs are rougher.
+        "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
+        "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+
+        // Last-resort Latin/symbol fonts.
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
@@ -295,12 +327,27 @@ pub fn loadSystemFont(size: i32) rl.Font {
         }
     }
 
-    for (font_paths) |path| {
-        const font = rl.LoadFontEx(path, size, &codepoints[0], @intCast(count));
-        if (font.texture.id != 0) {
-            rl.SetTextureFilter(font.texture, rl.TEXTURE_FILTER_BILINEAR);
-            return font;
+    // Prefer per-user Noto CJK first. Do not hard-code /home/user.
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "HOME")) |home| {
+        defer std.heap.page_allocator.free(home);
+
+        const home_font_paths = [_][]const u8{
+            ".local/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            ".local/share/fonts/noto-cjk/NotoSansSC-Regular.otf",
+            ".local/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
+            ".local/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+        };
+
+        for (home_font_paths) |rel_path| {
+            var path_buf: [std.fs.max_path_bytes:0]u8 = undefined;
+            if (std.fmt.bufPrintZ(&path_buf, "{s}/{s}", .{ home, rel_path })) |path| {
+                if (tryLoadFont(path.ptr, size, &codepoints[0], count)) |font| return font;
+            } else |_| {}
         }
+    } else |_| {}
+
+    for (font_paths) |path| {
+        if (tryLoadFont(path, size, &codepoints[0], count)) |font| return font;
     }
 
     return rl.GetFontDefault();
@@ -311,7 +358,7 @@ fn drawTruncatedText(font: rl.Font, text: []const u8, x: f32, y: f32, font_size:
     var text_buf: [256]u8 = undefined;
     const ellipsis = "...";
 
-    const len = @min(text.len, text_buf.len - 1);
+    const len = utf8PrefixLen(text, text_buf.len - 1);
     @memcpy(text_buf[0..len], text[0..len]);
     text_buf[len] = 0;
 
@@ -329,13 +376,19 @@ fn drawTruncatedText(font: rl.Font, text: []const u8, x: f32, y: f32, font_size:
 
     var fit_len: usize = 0;
     var i: usize = 0;
-    while (i < len) : (i += 1) {
-        const saved_char = text_buf[i + 1];
-        text_buf[i + 1] = 0;
+    while (i < len) {
+        const seq_len = utf8SequenceLength(text_buf[i]);
+        const next_i = i + seq_len;
+        if (next_i > len) break;
+
+        const saved_char = text_buf[next_i];
+        text_buf[next_i] = 0;
         const partial_size = rl.MeasureTextEx(font, text_ptr, font_size, spacing);
-        text_buf[i + 1] = saved_char;
+        text_buf[next_i] = saved_char;
         if (partial_size.x > available_width) break;
-        fit_len = i + 1;
+
+        fit_len = next_i;
+        i = next_i;
     }
 
     if (fit_len > 0) {

@@ -163,6 +163,12 @@ pub const MousePosition = struct {
     y: i32,
 };
 
+pub const MouseState = struct {
+    x: i32,
+    y: i32,
+    left_down: bool,
+};
+
 // Cached glGenerateMipmap function pointer (looked up once)
 var cached_glGenerateMipmap: ?*const fn (c_uint) callconv(.C) void = null;
 var glGenerateMipmap_looked_up: bool = false;
@@ -763,6 +769,20 @@ pub fn getMousePosition(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) Mou
     return MousePosition{
         .x = reply.*.root_x,
         .y = reply.*.root_y,
+    };
+}
+
+pub fn getMouseState(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) MouseState {
+    const cookie = xcb.xcb_query_pointer(conn, root);
+    const reply = xcb.xcb_query_pointer_reply(conn, cookie, null);
+    if (reply == null) {
+        return MouseState{ .x = 0, .y = 0, .left_down = false };
+    }
+    defer std.c.free(reply);
+    return MouseState{
+        .x = reply.*.root_x,
+        .y = reply.*.root_y,
+        .left_down = (reply.*.mask & @as(@TypeOf(reply.*.mask), @intCast(xcb.XCB_BUTTON_MASK_1))) != 0,
     };
 }
 

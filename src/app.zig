@@ -43,6 +43,7 @@ pub const App = struct {
     items: std.ArrayList(ui.DisplayWindow),
     selected_index: usize,
     mouseover_index: ?usize,
+    mouse_left_was_down: bool,
     current_layout: ui.GridLayout,
     font: rl.Font,
     monitor: MonitorInfo,
@@ -125,6 +126,7 @@ pub const App = struct {
             .items = items,
             .selected_index = 0,
             .mouseover_index = null,
+            .mouse_left_was_down = false,
             .current_layout = layout,
             .font = font,
             .monitor = monitor,
@@ -251,16 +253,24 @@ pub const App = struct {
             }
         }
 
-        // Handle mouse input first.
-        // In i3/raylib, click press events can be missed when the switcher just gained focus,
-        // so accept both Pressed and Down.
-        const mouse_down = rl.IsMouseButtonDown(rl.MOUSE_BUTTON_LEFT);
-        const mouse_pressed = rl.IsMouseButtonPressed(rl.MOUSE_BUTTON_LEFT);
-        const mouse_pos = rl.GetMousePosition();
+        // Handle mouse input with X11 global pointer state.
+        // Raylib mouse press/release can be unreliable while Alt is held and the keyboard is grabbed.
+        const mouse_state = x11.getMouseState(self.conn.conn, self.conn.root);
+        defer self.mouse_left_was_down = mouse_state.left_down;
+
+        const switcher_x = self.monitor.x + @divTrunc(self.monitor.width - @as(i32, @intCast(self.current_layout.total_width)), 2);
+        const switcher_y = self.monitor.y + @divTrunc(self.monitor.height - @as(i32, @intCast(self.current_layout.total_height)), 2);
+        const mouse_pos = rl.Vector2{
+            .x = @floatFromInt(mouse_state.x - switcher_x),
+            .y = @floatFromInt(mouse_state.y - switcher_y),
+        };
+        const mouse_pressed = mouse_state.left_down and !self.mouse_left_was_down;
+        const mouse_released = !mouse_state.left_down and self.mouse_left_was_down;
+
         if (ui.getItemAtPosition(self.displayItems(), self.current_layout, mouse_pos)) |idx| {
             rl.SetMouseCursor(rl.MOUSE_CURSOR_POINTING_HAND);
             self.mouseover_index = idx;
-            if (mouse_pressed or mouse_down) {
+            if (mouse_pressed or mouse_released) {
                 self.selected_index = idx;
                 self.confirmSwitching();
                 return;
@@ -274,7 +284,7 @@ pub const App = struct {
         // Do not cancel while the user is holding the mouse button; otherwise i3 can drop the click.
         if (self.focus_grace_frames > 0) {
             self.focus_grace_frames -= 1;
-        } else if (self.state == .switching and !mouse_down and !rl.IsWindowFocused()) {
+        } else if (self.state == .switching and !mouse_state.left_down and !rl.IsWindowFocused()) {
             self.cancelSwitching();
             return;
         }
@@ -744,6 +754,22 @@ pub const App = struct {
             },
             x11.XK_Return => {
                 self.confirmSwitching();
+                return true;
+            },
+            0x006c, 0x004c => { // l / L
+                self.selected_index = nav.moveSelectionRight(self.selected_index, self.displayItems().len);
+                return true;
+            },
+            0x0068, 0x0048 => { // h / H
+                self.selected_index = nav.moveSelectionLeft(self.selected_index, self.displayItems().len);
+                return true;
+            },
+            0x006a, 0x004a => { // j / J
+                self.selected_index = nav.moveSelectionDown(self.selected_index, self.current_layout.columns, self.displayItems().len);
+                return true;
+            },
+            0x006b, 0x004b => { // k / K
+                self.selected_index = nav.moveSelectionUp(self.selected_index, self.current_layout.columns);
                 return true;
             },
             x11.XK_Right => {
