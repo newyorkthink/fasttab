@@ -2,6 +2,20 @@
 
 A lightning fast Alt+Tab switcher for X11 written in Zig using Raylib.
 
+## Why this exists
+
+FastTab exists because [`felixfung/skippy-xd`](https://github.com/felixfung/skippy-xd) is no longer a project I consider worth depending on.
+
+`skippy-xd` had a good idea, but the implementation and maintenance have not kept up with what a real daily-use window switcher needs. Bugs remain unresolved, rough behavior is treated as normal, and basic interaction problems are left for users to tolerate. The result is a tool that feels neglected, fragile, and frustrating to use.
+
+For something as fundamental as Alt+Tab, this is not acceptable. A window switcher should be fast, predictable, and reliable every time it is triggered. `skippy-xd` fails that standard. It can feel slow, awkward, visually outdated, and technically brittle. Instead of feeling like a polished desktop component, it feels like old X11 code that users are expected to work around.
+
+FastTab is my answer to that mess.
+
+This project is not a tiny patch, not a cosmetic fork, and not an attempt to politely preserve broken design decisions. FastTab fixes the bugs I actually hit, removes bad assumptions from the old approach, and rebuilds the switcher around a new Zig + Raylib + OpenGL architecture.
+
+The goal is simple: a fast, clean, predictable X11 window switcher that works properly in real daily use instead of making users fight the tool.
+
 
 https://github.com/user-attachments/assets/6327cd4b-4750-40c8-ab30-f8d80463887d
 
