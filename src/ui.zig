@@ -232,11 +232,17 @@ pub fn loadTextureFromThumbnail(thumb: *const thumbnail.Thumbnail) rl.Texture2D 
 
 fn tryLoadFont(path: [*c]const u8, size: i32, codepoints: [*c]c_int, count: usize) ?rl.Font {
     const font = rl.LoadFontEx(path, size, codepoints, @intCast(count));
-    if (font.texture.id != 0) {
-        rl.SetTextureFilter(font.texture, rl.TEXTURE_FILTER_BILINEAR);
-        return font;
+
+    // raylib may return its built-in bitmap font when a font file cannot be parsed
+    // or when the requested atlas cannot be created. Reject that fallback; otherwise
+    // English looks blocky and CJK glyphs render as '?'.
+    if (font.texture.id == 0 or font.glyphCount < 1024) {
+        if (font.texture.id != 0) rl.UnloadFont(font);
+        return null;
     }
-    return null;
+
+    rl.SetTextureFilter(font.texture, rl.TEXTURE_FILTER_BILINEAR);
+    return font;
 }
 
 fn utf8SequenceLength(first: u8) usize {
@@ -266,7 +272,7 @@ fn isFontFile(name: []const u8) bool {
 
 fn fontNameMatches(name: []const u8, needles: []const []const u8) bool {
     for (needles) |needle| {
-        if (std.mem.indexOf(u8, name, needle) != null) return true;
+        if (std.ascii.indexOfIgnoreCase(name, needle) != null) return true;
     }
     return false;
 }
@@ -322,12 +328,31 @@ pub fn loadSystemFont(size: i32) rl.Font {
         }
     }
 
-    // User-local exact paths first, without hard-coding /home/user.
+    const cjk_preferred_needles = [_][]const u8{
+        "NotoSansCJK",
+        "NotoSansSC",
+        "SourceHanSans",
+        "SourceHanSansSC",
+        "SourceHanSansCN",
+        "AdobeHeiti",
+        "AdobeSong",
+        "wqy-microhei",
+        "wqy-zenhei",
+    };
+
+    // User-local fonts first, without hard-coding /home/user.
+    // Prefer real OTF/TTF CJK fonts when present; reject raylib's built-in fallback.
     if (std.process.getEnvVarOwned(std.heap.page_allocator, "HOME")) |home| {
         defer std.heap.page_allocator.free(home);
+
         const local_paths = [_][]const u8{
-            ".local/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            ".local/share/fonts/noto-cjk/NotoSansCJK-Regular.otf",
             ".local/share/fonts/noto-cjk/NotoSansSC-Regular.otf",
+            ".local/share/fonts/adobe-font-folio-11.0/SourceHanSansSC-Regular.otf",
+            ".local/share/fonts/adobe-font-folio-11.0/SourceHanSansCN-Regular.otf",
+            ".local/share/fonts/adobe-font-folio-11.0/AdobeHeitiStd-Regular.otf",
+            ".local/share/fonts/adobe-font-folio-11.0/AdobeSongStd-Light.otf",
+            ".local/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
             ".local/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
             ".local/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
         };
@@ -337,6 +362,11 @@ pub fn loadSystemFont(size: i32) rl.Font {
                 if (tryLoadFont(path.ptr, size, &codepoints[0], count)) |font| return font;
             } else |_| {}
         }
+
+        var fonts_dir_buf: [std.fs.max_path_bytes:0]u8 = undefined;
+        if (std.fmt.bufPrint(&fonts_dir_buf, "{s}/.local/share/fonts", .{home})) |fonts_dir| {
+            if (tryLoadFontRecursive(fonts_dir, 4, size, &codepoints[0], count, &cjk_preferred_needles)) |font| return font;
+        } else |_| {}
     } else |_| {}
 
     const font_paths = [_][*c]const u8{
@@ -365,6 +395,14 @@ pub fn loadSystemFont(size: i32) rl.Font {
 
     for (font_paths) |path| {
         if (tryLoadFont(path, size, &codepoints[0], count)) |font| return font;
+    }
+
+    const system_dirs = [_][]const u8{
+        "/usr/share/fonts",
+        "/usr/local/share/fonts",
+    };
+    for (system_dirs) |dir| {
+        if (tryLoadFontRecursive(dir, 5, size, &codepoints[0], count, &cjk_preferred_needles)) |font| return font;
     }
 
     return rl.GetFontDefault();

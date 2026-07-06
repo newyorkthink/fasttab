@@ -164,12 +164,13 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
                     }
                 } else {
                     // Switching: normalize Tab keycodes so Alt+Shift+Tab always means previous.
-                    const effective_keysym = if (is_tab_key) blk: {
-                        break :blk if (is_shift or shifted_keysym == x11.XK_ISO_Left_Tab)
+                    var effective_keysym = base_keysym;
+                    if (is_tab_key) {
+                        effective_keysym = if (is_shift or shifted_keysym == x11.XK_ISO_Left_Tab)
                             x11.XK_ISO_Left_Tab
                         else
                             x11.XK_Tab;
-                    } else base_keysym;
+                    }
                     _ = application.handleKeyEvent(effective_keysym, true);
                 }
             },
