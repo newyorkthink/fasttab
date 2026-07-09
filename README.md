@@ -98,12 +98,12 @@ FastTab improves performance in several ways:
 
 1. Clone this repository
 1. Run the `setup.sh` script to install Raylib and other dependencies
-1. Build the project with `zig build -Drelease-safe`
+1. Build the project with `zig build -Doptimize=ReleaseSafe`
 1. The resulting binary will be located at `./zig-out/bin/fasttab`
 
 ## Installation instructions
 
-1. Follow the build instructions to build the project, or grab the latest binary from the [releases page](https://github.com/LBognanni/fasttab/releases/latest)
+1. Follow the build instructions to build the project, or grab the latest binary from the [releases page](https://github.com/newyorkthink/fasttab/releases/latest)
 1. Move the binary somewhere in your PATH (e.g. `/usr/local/bin`)
 1. Run `fasttab daemon &` to start the daemon in the background
 1. You're done! Try Alt+Tabbing around!
