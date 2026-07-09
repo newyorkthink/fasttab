@@ -45,9 +45,9 @@ curl -L "$RAYLIB_URL" | tar -xz -C "$LIB_DIR"
 echo "raylib installed to ${RAYLIB_DIR}"
 
 # Verify installation
-if [ -f "${RAYLIB_DIR}/lib/libraylib.so" ]; then
-    echo "Setup complete. You can now build with: zig build"
+if [ -f "${RAYLIB_DIR}/lib/libraylib.a" ]; then
+    echo "Setup complete. You can now build with: zig build -Doptimize=ReleaseSafe"
 else
-    echo "Error: raylib installation failed"
+    echo "Error: raylib static library installation failed"
     exit 1
 fi
