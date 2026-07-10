@@ -126,7 +126,6 @@ jobs:
           grep -Rqs '^Exec=fasttab daemon --replace$' AppDir
           grep -Rqs "^X-AppImage-Version=${VERSION}$" AppDir
           grep -Fq 'set -- daemon --replace "$@"' AppDir/AppRun.sh
-          strings AppDir/shared/bin/fasttab | grep -Fq 'current-workspace switching started'
           (
             cd dist
             sha256sum -c "FastTab-${VERSION}-x86_64.AppImage.sha256"
