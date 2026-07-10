@@ -1,0 +1,21 @@
+name: Validate AppImage runtime env
+
+on:
+  push:
+    branches:
+      - agent/fix-appimage-sigint-delay-1.0.5
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate source changes
+        run: |
+          bash -n build_appimage.sh
+          grep -Fq "--appimage-addenvs 'REUSE_CHECK_DELAY=0'" build_appimage.sh
+          grep -Fq 'zsyncmake -u "$OUTNAME" -o "$APPIMAGE.zsync" "$APPIMAGE"' build_appimage.sh
+          test "$(tr -d '[:space:]' < VERSION)" = "1.0.5"
