@@ -52,14 +52,22 @@ jobs:
         with:
           version: 0.14.0
 
-      - name: Validate release and packaging files
+      - name: Validate release, routing, and packaging files
         run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
           python -m py_compile .github/scripts/*.py
           python -c "import xml.etree.ElementTree as ET; ET.parse('packaging/fasttab.svg')"
           bash -n build_appimage.sh
           desktop-file-validate packaging/fasttab.desktop
-          grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' VERSION
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           grep -Fq 'Exec=fasttab daemon --replace' packaging/fasttab.desktop
+          grep -Fq "X-AppImage-Version=${VERSION}" packaging/fasttab.desktop
+          grep -Fq 'fn routeIdleTab' src/main.zig
+          grep -Fq '.current_workspace => application.handleWinTab' src/main.zig
+          if grep -Fq 'const is_super =' src/main.zig; then
+            echo "Idle Win+Tab routing must not depend on the delivered MOD4 bit." >&2
+            exit 1
+          fi
 
       - name: Download dependencies
         run: ./setup.sh
@@ -116,7 +124,9 @@ jobs:
           find AppDir -name '*.desktop' -print -quit | grep -q .
           find AppDir \( -iname 'fasttab.svg' -o -iname 'fasttab.png' \) -print -quit | grep -q .
           grep -Rqs '^Exec=fasttab daemon --replace$' AppDir
+          grep -Rqs "^X-AppImage-Version=${VERSION}$" AppDir
           grep -Fq 'set -- daemon --replace "$@"' AppDir/AppRun.sh
+          strings AppDir/shared/bin/fasttab | grep -Fq 'current-workspace switching started'
           (
             cd dist
             sha256sum -c "FastTab-${VERSION}-x86_64.AppImage.sha256"
@@ -171,9 +181,9 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           {
-            echo "FastTab ${VERSION} fixes AppImage startup when an older FastTab daemon is already running."
+            echo "FastTab ${VERSION} fixes Win+Tab event routing on X11."
             echo
-            echo "The AppImage now starts the bundled daemon with --replace, ensuring Win+Tab uses current-workspace switching instead of behavior from a stale process."
+            echo "Idle grabbed Tab events are now routed by the Alt modifier instead of requiring the delivered Super/Mod4 state bit. Alt+Tab continues to switch across all tracked windows, while Win+Tab reliably enters current-workspace mode."
             echo
             echo "Included downloads:"
             echo
