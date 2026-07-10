@@ -94,3 +94,5 @@ jobs:
           git add build_appimage.sh VERSION packaging/fasttab.desktop README.md .github/workflows/ci.yml .github/workflows/patch-appimage-sigint-1.0.5.yml
           git commit -m "Remove AppImage Ctrl+C shutdown delay"
           git push origin HEAD:agent/fix-appimage-sigint-delay-1.0.5
+
+# Triggered intentionally after the branch was created.
