@@ -1,0 +1,56 @@
+name: Validate Win+Tab current workspace
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            curl tar xz-utils \
+            libasound2-dev \
+            libgl1-mesa-dev \
+            libglu1-mesa-dev \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcb-composite0-dev \
+            libxcb-damage0-dev \
+            libxcb-image0-dev \
+            libxcb-keysyms1-dev \
+            libxcb-shm0-dev \
+            libxcb-util0-dev \
+            libxcb1-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            libglfw3-dev
+
+      - name: Install Zig 0.14.0
+        run: |
+          curl -L https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz -o /tmp/zig.tar.xz
+          tar -xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-linux-x86_64-0.14.0" >> "$GITHUB_PATH"
+
+      - name: Prepare pinned dependencies
+        run: ./setup.sh
+
+      - name: Run tests
+        run: zig build test
+
+      - name: Build release binary
+        run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
