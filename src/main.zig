@@ -172,7 +172,6 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
                 const state_mask = key_event.state;
 
                 const is_shift = (state_mask & x11.MOD_SHIFT) != 0;
-                const is_alt = (state_mask & x11.MOD_ALT) != 0;
 
                 // Some X layouts report Shift+Tab as ISO_Left_Tab, others keep the
                 // same Tab keycode and only set the Shift modifier. Treat both as Tab.
