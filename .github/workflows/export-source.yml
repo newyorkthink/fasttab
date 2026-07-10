@@ -1,0 +1,26 @@
+name: Export source
+
+on:
+  push:
+    branches:
+      - agent/fix-win-tab-source-1.0.2
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fasttab-source-export
+          path: |
+            src/app.zig
+            src/main.zig
+            src/tests/app_filter_test.zig
+            build.zig
+            VERSION
+          if-no-files-found: error
+          retention-days: 1
