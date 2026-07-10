@@ -59,14 +59,13 @@ yay -S --needed --noconfirm \
   cmake \
   xorg-server-xvfb
 
-# FastTab build and runtime dependencies.
+# FastTab build and runtime dependencies. libX11-xcb.so is provided by libx11 on Arch.
 yay -S --needed --noconfirm \
   alsa-lib \
   mesa \
   libglvnd \
   wayland \
   libx11 \
-  libx11-xcb \
   libxcb \
   xcb-util \
   xcb-util-image \
