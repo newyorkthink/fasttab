@@ -66,6 +66,8 @@ jobs:
           grep -Fq '.current_workspace => handleWinTabIncludingSingle' src/main.zig
           grep -Fq 'fn shouldStartSingleWindowFallback' src/main.zig
           grep -Fq 'Win+Tab single-window current-workspace switching started' src/main.zig
+          grep -Fq 'fn shouldTerminateExistingFastTab' src/main.zig
+          grep -Fq 'process_group != my_process_group' src/main.zig
           grep -Fq -- "--appimage-addenvs 'REUSE_CHECK_DELAY=0'" build_appimage.sh
           grep -Fq 'zsyncmake -u "$OUTNAME" -o "$APPIMAGE.zsync" "$APPIMAGE"' build_appimage.sh
           if grep -Fq 'const is_super =' src/main.zig; then
@@ -186,9 +188,9 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           {
-            echo "FastTab ${VERSION} removes the AppImage Ctrl+C shutdown delay."
+            echo "FastTab ${VERSION} fixes AppImage launches through a fasttab symlink."
             echo
-            echo "The AppImage now embeds REUSE_CHECK_DELAY=0 for uruntime, eliminating the several-second mount-reuse wait after Ctrl+C. The zsync metadata is regenerated after the runtime environment is patched."
+            echo "The --replace scan now ignores processes in the current launch process group, preventing an AppImage runtime invoked through a symlink named fasttab from killing its own wrapper."
             echo
             echo "Included downloads:"
             echo

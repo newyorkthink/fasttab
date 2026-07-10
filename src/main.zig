@@ -64,8 +64,25 @@ fn installFastSignalExit() void {
     _ = c.signal(c.SIGTERM, fastExitFromSignal);
 }
 
+fn shouldTerminateExistingFastTab(
+    comm: []const u8,
+    pid: i32,
+    my_pid: i32,
+    process_group: i32,
+    my_process_group: i32,
+) bool {
+    if (!std.mem.eql(u8, comm, "fasttab")) return false;
+    if (pid == my_pid) return false;
+
+    // When the AppImage is launched through a symlink named `fasttab`, its
+    // uruntime wrapper has the same process name. It belongs to this launch's
+    // process group and must not be killed by --replace.
+    return process_group < 0 or process_group != my_process_group;
+}
+
 fn killExistingInstance() !void {
-    const my_pid = std.c.getpid();
+    const my_pid: i32 = @intCast(std.c.getpid());
+    const my_process_group: i32 = @intCast(c.getpgrp());
     var dir = try std.fs.openDirAbsolute("/proc", .{ .iterate = true });
     defer dir.close();
 
@@ -83,12 +100,13 @@ fn killExistingInstance() !void {
         const bytes_read = try file.readAll(&buf);
         const comm = std.mem.trimRight(u8, buf[0..bytes_read], "\n");
 
-        if (std.mem.eql(u8, comm, "fasttab")) {
-            std.debug.print("Killing existing instance (PID {d})...\n", .{pid});
-            std.posix.kill(pid, std.posix.SIG.TERM) catch |err| {
-                std.debug.print("Failed to kill PID {d}: {}\n", .{ pid, err });
-            };
-        }
+        const process_group: i32 = @intCast(c.getpgid(pid));
+        if (!shouldTerminateExistingFastTab(comm, pid, my_pid, process_group, my_process_group)) continue;
+
+        std.debug.print("Killing existing instance (PID {d})...\n", .{pid});
+        std.posix.kill(pid, std.posix.SIG.TERM) catch |err| {
+            std.debug.print("Failed to kill PID {d}: {}\n", .{ pid, err });
+        };
     }
 }
 
@@ -270,6 +288,14 @@ fn handleWinTabIncludingSingle(application: *app.App, conn: *x11.Connection, shi
     application.show_delay_frames = SHOW_DELAY_FRAMES;
     application.state = .switching;
     log.debug("Win+Tab single-window current-workspace switching started (workspace={d})", .{current_workspace});
+}
+
+test "replacement ignores the current AppImage process group" {
+    try std.testing.expect(!shouldTerminateExistingFastTab("fasttab", 100, 100, 20, 20));
+    try std.testing.expect(!shouldTerminateExistingFastTab("fasttab", 101, 100, 20, 20));
+    try std.testing.expect(shouldTerminateExistingFastTab("fasttab", 101, 100, 21, 20));
+    try std.testing.expect(shouldTerminateExistingFastTab("fasttab", 101, 100, -1, 20));
+    try std.testing.expect(!shouldTerminateExistingFastTab("other", 101, 100, 21, 20));
 }
 
 test "idle Alt+Tab routes to all windows" {

@@ -10,4 +10,4 @@ Categories=Utility;System;
 Keywords=window;switcher;alt-tab;x11;i3;
 StartupNotify=false
 StartupWMClass=FastTab
-X-AppImage-Version=1.0.5
+X-AppImage-Version=1.0.6
