@@ -10,6 +10,19 @@ const c = @cImport({
 
 const log = std.log.scoped(.fasttab);
 
+const IdleTabRoute = enum {
+    all_windows,
+    current_workspace,
+};
+
+/// Idle Tab events can only arrive through FastTab's passive Alt+Tab or Win+Tab grabs.
+/// Some X11 setups deliver the Win+Tab event without MOD4 in the event state, so Alt is
+/// the reliable discriminator: Alt means global switching; every other grabbed Tab means
+/// current-workspace switching.
+fn routeIdleTab(state_mask: u16) IdleTabRoute {
+    return if ((state_mask & x11.MOD_ALT) != 0) .all_windows else .current_workspace;
+}
+
 pub fn main() !void {
     installFastSignalExit();
     var args_iter = std.process.args();
@@ -159,8 +172,6 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
                 const state_mask = key_event.state;
 
                 const is_shift = (state_mask & x11.MOD_SHIFT) != 0;
-                const is_super = (state_mask & x11.MOD_SUPER) != 0;
-                const is_alt = (state_mask & x11.MOD_ALT) != 0;
 
                 // Some X layouts report Shift+Tab as ISO_Left_Tab, others keep the
                 // same Tab keycode and only set the Shift modifier. Treat both as Tab.
@@ -168,20 +179,20 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
                     base_keysym == x11.XK_ISO_Left_Tab or
                     shifted_keysym == x11.XK_Tab or
                     shifted_keysym == x11.XK_ISO_Left_Tab;
+                const reverse = is_shift or base_keysym == x11.XK_ISO_Left_Tab;
 
-                if (is_tab_key and is_super and !is_alt) {
-                    // Super+Tab (no Alt): switch only between windows on the current workspace.
-                    application.handleWinTab(is_shift or base_keysym == x11.XK_ISO_Left_Tab);
-                } else if (application.state == .idle) {
-                    // Idle: respond to Alt+Tab / Alt+Shift+Tab. Passive grabs guarantee Alt.
+                if (application.state == .idle) {
                     if (is_tab_key) {
-                        application.handleAltTab(is_shift or base_keysym == x11.XK_ISO_Left_Tab);
+                        switch (routeIdleTab(state_mask)) {
+                            .all_windows => application.handleAltTab(reverse),
+                            .current_workspace => application.handleWinTab(reverse),
+                        }
                     }
                 } else {
-                    // Switching: normalize Tab keycodes so Alt+Shift+Tab always means previous.
+                    // Switching: normalize Tab keycodes so Shift+Tab always means previous.
                     var effective_keysym = base_keysym;
                     if (is_tab_key) {
-                        effective_keysym = if (is_shift or base_keysym == x11.XK_ISO_Left_Tab)
+                        effective_keysym = if (reverse)
                             x11.XK_ISO_Left_Tab
                         else
                             x11.XK_Tab;
@@ -209,6 +220,21 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
                 }
             },
         }
-
     }
+}
+
+test "idle Alt+Tab routes to all windows" {
+    try std.testing.expectEqual(IdleTabRoute.all_windows, routeIdleTab(x11.MOD_ALT));
+    try std.testing.expectEqual(IdleTabRoute.all_windows, routeIdleTab(x11.MOD_ALT | x11.MOD_SHIFT));
+}
+
+test "idle grabbed Tab without Alt routes to current workspace" {
+    try std.testing.expectEqual(IdleTabRoute.current_workspace, routeIdleTab(x11.MOD_SUPER));
+    try std.testing.expectEqual(IdleTabRoute.current_workspace, routeIdleTab(x11.MOD_SUPER | x11.MOD_SHIFT));
+    // Regression: some X11 setups omit MOD4 from the delivered Win+Tab state.
+    try std.testing.expectEqual(IdleTabRoute.current_workspace, routeIdleTab(0));
+}
+
+test "Alt remains authoritative when extra modifier bits are present" {
+    try std.testing.expectEqual(IdleTabRoute.all_windows, routeIdleTab(x11.MOD_ALT | x11.MOD_SUPER));
 }
