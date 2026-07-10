@@ -1,0 +1,96 @@
+name: Patch AppImage Ctrl+C latency
+
+on:
+  push:
+    branches:
+      - agent/fix-appimage-sigint-delay-1.0.5
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-appimage-sigint-delay-1.0.5
+          fetch-depth: 0
+
+      - name: Apply packaging and release changes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          build = Path('build_appimage.sh')
+          text = build.read_text()
+          old = '''APPIMAGE="$OUTPATH/$OUTNAME"
+          test -s "$APPIMAGE"
+          chmod +x "$APPIMAGE"
+          rm -f "$OUTPATH/appinfo"
+'''
+          new = '''APPIMAGE="$OUTPATH/$OUTNAME"
+          test -s "$APPIMAGE"
+          chmod +x "$APPIMAGE"
+
+          # uruntime otherwise waits several seconds after Ctrl+C while checking whether
+          # the mounted image directory is still in use. Disable that polling delay so
+          # foreground AppImage launches return to the terminal immediately.
+          "$APPIMAGE" --appimage-addenvs 'REUSE_CHECK_DELAY=0'
+          "$APPIMAGE" --appimage-envs | grep -Fxq 'REUSE_CHECK_DELAY=0'
+
+          # quick-sharun creates zsync metadata before the runtime environment is patched.
+          # Regenerate it so the zsync hashes match the final AppImage bytes.
+          rm -f "$APPIMAGE.zsync"
+          zsyncmake -u "$OUTNAME" -o "$APPIMAGE.zsync" "$APPIMAGE"
+
+          rm -f "$OUTPATH/appinfo"
+'''
+          if old not in text:
+              raise SystemExit('build_appimage.sh insertion point not found')
+          build.write_text(text.replace(old, new, 1))
+
+          Path('VERSION').write_text('1.0.5\n')
+
+          desktop = Path('packaging/fasttab.desktop')
+          text = desktop.read_text()
+          if 'X-AppImage-Version=1.0.4' not in text:
+              raise SystemExit('unexpected desktop version')
+          desktop.write_text(text.replace('X-AppImage-Version=1.0.4', 'X-AppImage-Version=1.0.5'))
+
+          readme = Path('README.md')
+          text = readme.read_text().replace('1.0.4', '1.0.5')
+          old_note = 'The AppImage automatically replaces an older running FastTab daemon. Version 1.0.4 also displays the Win+Tab switcher when the current workspace contains exactly one window.'
+          new_note = 'The AppImage automatically replaces an older running FastTab daemon. Version 1.0.5 also removes the uruntime mount-reuse delay, so pressing Ctrl+C during a foreground AppImage run returns to the terminal immediately.'
+          if old_note in text:
+              text = text.replace(old_note, new_note)
+          readme.write_text(text)
+
+          ci = Path('.github/workflows/ci.yml')
+          text = ci.read_text()
+          marker = '          grep -Fq \'set -- daemon --replace "$@"\' AppDir/AppRun.sh\n'
+          addition = marker + '          "$APPIMAGE" --appimage-envs | grep -Fxq \'REUSE_CHECK_DELAY=0\'\n          grep -Eq \'^URL: FastTab-[0-9]+\\.[0-9]+\\.[0-9]+-x86_64\\.AppImage$\' "$APPIMAGE.zsync"\n'
+          if marker not in text:
+              raise SystemExit('CI AppImage validation marker not found')
+          text = text.replace(marker, addition, 1)
+          text = text.replace(
+              'echo "FastTab ${VERSION} shows Win+Tab even when the current workspace has one window."',
+              'echo "FastTab ${VERSION} removes the AppImage Ctrl+C shutdown delay."',
+          )
+          text = text.replace(
+              'echo "Win+Tab now opens the current-workspace switcher for any non-empty workspace, including a workspace containing exactly one window. Empty workspaces still do not open the switcher."',
+              'echo "The AppImage now embeds REUSE_CHECK_DELAY=0 for uruntime, eliminating the several-second mount-reuse wait after Ctrl+C. The zsync metadata is regenerated after the runtime environment is patched."',
+          )
+          ci.write_text(text)
+
+          Path('.github/workflows/patch-appimage-sigint-1.0.5.yml').unlink()
+          PY
+
+      - name: Commit patched files
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add build_appimage.sh VERSION packaging/fasttab.desktop README.md .github/workflows/ci.yml .github/workflows/patch-appimage-sigint-1.0.5.yml
+          git commit -m "Remove AppImage Ctrl+C shutdown delay"
+          git push origin HEAD:agent/fix-appimage-sigint-delay-1.0.5
