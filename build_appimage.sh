@@ -24,6 +24,7 @@ export DESKTOP="$ROOT_DIR/packaging/fasttab.desktop"
 export OUTPATH="$ROOT_DIR/dist"
 export OUTNAME="FastTab-${VERSION}-x86_64.AppImage"
 export DEPLOY_OPENGL=1
+export UPINFO="gh-releases-zsync|newyorkthink|fasttab|latest|FastTab-*-x86_64.AppImage.zsync"
 
 rm -rf AppDir dist
 mkdir -p dist
@@ -38,13 +39,11 @@ if ! command -v quick-sharun >/dev/null 2>&1; then
   exit 1
 fi
 
-# Base packaging toolchain, matching the AnyLinux quick-sharun builders.
+# Minimal packaging toolchain required by quick-sharun and the Zig build.
 yay -S --needed --noconfirm \
   gcc \
-  base-devel \
   git \
   curl \
-  wget \
   tar \
   xz \
   binutils \
@@ -55,9 +54,7 @@ yay -S --needed --noconfirm \
   util-linux \
   zsync \
   file \
-  pkgconf \
-  cmake \
-  xorg-server-xvfb
+  pkgconf
 
 # FastTab build and runtime dependencies. libX11-xcb.so is provided by libx11 on Arch.
 yay -S --needed --noconfirm \
@@ -107,11 +104,16 @@ quick-sharun --make-appimage
 APPIMAGE="$OUTPATH/$OUTNAME"
 test -s "$APPIMAGE"
 chmod +x "$APPIMAGE"
+rm -f "$OUTPATH/appinfo"
 
 cp zig-out/bin/fasttab "$OUTPATH/fasttab-x86_64"
 chmod +x "$OUTPATH/fasttab-x86_64"
-sha256sum "$APPIMAGE" > "$APPIMAGE.sha256"
-sha256sum "$OUTPATH/fasttab-x86_64" > "$OUTPATH/fasttab-x86_64.sha256"
+
+(
+  cd "$OUTPATH"
+  sha256sum "$OUTNAME" > "$OUTNAME.sha256"
+  sha256sum fasttab-x86_64 > fasttab-x86_64.sha256
+)
 
 printf 'Created:\n'
 find "$OUTPATH" -maxdepth 1 -type f -printf '  %f (%s bytes)\n' | sort
