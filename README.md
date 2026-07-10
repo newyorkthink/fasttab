@@ -27,7 +27,7 @@ https://github.com/user-attachments/assets/6327cd4b-4750-40c8-ab30-f8d80463887d
 ## How It Works
 
 - Press `Alt+Tab` to switch between all windows
-- Press `Win+Tab` to switch between windows of the same application (e.g. all Chrome windows)
+- Press `Win+Tab` to switch between windows on the current workspace
 - Press `Tab` to move to the next window
     - Hold `Shift` while pressing `Tab` to navigate backwards
     - Or quick tap the `Shift` key to move backwards
@@ -68,7 +68,7 @@ FastTab improves performance in several ways:
  - An X11-based desktop environment (e.g. KDE Plasma, Xfce, etc)
  - Hardware-accelerated OpenGL support
  - Rebind the default `Alt+Tab` shortcuts to something else (e.g. `Ctrl+Meta+Tab`, `Ctrl+Meta+Shift+Tab`), to avoid conflicts.
- - To use **Win+Tab** (same-app switcher): disable any desktop-environment shortcut that uses `Super+Tab` (e.g. in KDE Plasma: *System Settings → Shortcuts → KWin → Walk Through Windows of Current Application*).
+ - To use **Win+Tab** (current-workspace switcher): disable any desktop-environment shortcut that uses `Super+Tab`.
 
 ## Build instructions
 
