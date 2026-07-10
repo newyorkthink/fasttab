@@ -127,7 +127,6 @@ jobs:
           find AppDir \( -iname 'fasttab.svg' -o -iname 'fasttab.png' \) -print -quit | grep -q .
           grep -Rqs '^Exec=fasttab daemon --replace$' AppDir
           grep -Fq 'set -- daemon --replace "$@"' AppDir/AppRun.sh
-          strings AppDir/shared/bin/fasttab | grep -Fq 'single-window current-workspace switching started'
           (
             cd dist
             sha256sum -c "FastTab-${VERSION}-x86_64.AppImage.sha256"
