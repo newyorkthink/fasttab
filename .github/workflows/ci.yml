@@ -63,7 +63,9 @@ jobs:
           grep -Fq 'Exec=fasttab daemon --replace' packaging/fasttab.desktop
           grep -Fq "X-AppImage-Version=${VERSION}" packaging/fasttab.desktop
           grep -Fq 'fn routeIdleTab' src/main.zig
-          grep -Fq '.current_workspace => application.handleWinTab' src/main.zig
+          grep -Fq '.current_workspace => handleWinTabIncludingSingle' src/main.zig
+          grep -Fq 'fn shouldStartSingleWindowFallback' src/main.zig
+          grep -Fq 'Win+Tab single-window current-workspace switching started' src/main.zig
           if grep -Fq 'const is_super =' src/main.zig; then
             echo "Idle Win+Tab routing must not depend on the delivered MOD4 bit." >&2
             exit 1
@@ -179,9 +181,9 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           {
-            echo "FastTab ${VERSION} fixes Win+Tab event routing on X11."
+            echo "FastTab ${VERSION} shows Win+Tab even when the current workspace has one window."
             echo
-            echo "Idle grabbed Tab events are now routed by the Alt modifier instead of requiring the delivered Super/Mod4 state bit. Alt+Tab continues to switch across all tracked windows, while Win+Tab reliably enters current-workspace mode."
+            echo "Win+Tab now opens the current-workspace switcher for every non-empty workspace, including one containing exactly one window. Empty workspaces still do not open the switcher."
             echo
             echo "Included downloads:"
             echo
@@ -193,7 +195,7 @@ jobs:
             echo "Shortcuts:"
             echo
             echo '- `Alt+Tab`: switch across all tracked windows.'
-            echo '- `Win+Tab`: switch only between windows on the current workspace.'
+            echo '- `Win+Tab`: display windows on the current workspace, including a single window.'
             echo '- Add `Shift` for reverse navigation.'
             echo
             echo "FastTab requires X11 and hardware-accelerated OpenGL."

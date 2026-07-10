@@ -9,6 +9,7 @@ const c = @cImport({
 });
 
 const log = std.log.scoped(.fasttab);
+const SHOW_DELAY_FRAMES: u8 = 1;
 
 const IdleTabRoute = enum {
     all_windows,
@@ -21,6 +22,10 @@ const IdleTabRoute = enum {
 /// current-workspace switching.
 fn routeIdleTab(state_mask: u16) IdleTabRoute {
     return if ((state_mask & x11.MOD_ALT) != 0) .all_windows else .current_workspace;
+}
+
+fn shouldStartSingleWindowFallback(window_count: usize) bool {
+    return window_count == 1;
 }
 
 pub fn main() !void {
@@ -185,7 +190,7 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
                     if (is_tab_key) {
                         switch (routeIdleTab(state_mask)) {
                             .all_windows => application.handleAltTab(reverse),
-                            .current_workspace => application.handleWinTab(reverse),
+                            .current_workspace => handleWinTabIncludingSingle(application, conn, reverse),
                         }
                     }
                 } else {
@@ -223,6 +228,50 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
     }
 }
 
+/// app.handleWinTab intentionally returns without showing when the filtered list has one item.
+/// Preserve its normal multi-window behavior, then start the same current-workspace mode for the
+/// single-window case so Win+Tab remains visually consistent on every non-empty workspace.
+fn handleWinTabIncludingSingle(application: *app.App, conn: *x11.Connection, shift: bool) void {
+    application.handleWinTab(shift);
+    if (application.state != .idle) return;
+
+    const active_win = x11.getActiveWindow(conn.conn, conn.root, conn.atoms);
+    if (active_win == 0) return;
+
+    var workspace_info = x11.getWorkspaceInfo(application.allocator, conn.conn, conn.root, conn.atoms);
+    defer workspace_info.deinit();
+
+    const current_workspace = workspace_info.current orelse blk: {
+        const active_workspace = x11.getWindowDesktop(conn.conn, active_win, conn.atoms) orelse return;
+        if (active_workspace == 0xFFFFFFFF) return;
+        break :blk active_workspace;
+    };
+
+    application.current_workspace = current_workspace;
+    for (application.items.items) |*item| {
+        item.workspace = x11.getWindowDesktop(conn.conn, item.id, conn.atoms);
+    }
+
+    application.filtered_items.clearRetainingCapacity();
+    app.filterItemsByWorkspace(application.items.items, current_workspace, &application.filtered_items);
+    if (!shouldStartSingleWindowFallback(application.filtered_items.items.len)) {
+        application.filtered_items.clearRetainingCapacity();
+        return;
+    }
+
+    application.mouse_left_was_down = false;
+    if (!x11.grabKeyboard(conn.conn, conn.root)) {
+        application.filtered_items.clearRetainingCapacity();
+        return;
+    }
+
+    application.switch_mode = .current_workspace;
+    application.selected_index = 0;
+    application.show_delay_frames = SHOW_DELAY_FRAMES;
+    application.state = .switching;
+    log.debug("Win+Tab single-window current-workspace switching started (workspace={d})", .{current_workspace});
+}
+
 test "idle Alt+Tab routes to all windows" {
     try std.testing.expectEqual(IdleTabRoute.all_windows, routeIdleTab(x11.MOD_ALT));
     try std.testing.expectEqual(IdleTabRoute.all_windows, routeIdleTab(x11.MOD_ALT | x11.MOD_SHIFT));
@@ -237,4 +286,10 @@ test "idle grabbed Tab without Alt routes to current workspace" {
 
 test "Alt remains authoritative when extra modifier bits are present" {
     try std.testing.expectEqual(IdleTabRoute.all_windows, routeIdleTab(x11.MOD_ALT | x11.MOD_SUPER));
+}
+
+test "single current-workspace window starts the visual fallback" {
+    try std.testing.expect(!shouldStartSingleWindowFallback(0));
+    try std.testing.expect(shouldStartSingleWindowFallback(1));
+    try std.testing.expect(!shouldStartSingleWindowFallback(2));
 }
