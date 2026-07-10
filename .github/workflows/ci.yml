@@ -59,6 +59,7 @@ jobs:
           bash -n build_appimage.sh
           desktop-file-validate packaging/fasttab.desktop
           grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' VERSION
+          grep -Fq 'Exec=fasttab daemon --replace' packaging/fasttab.desktop
 
       - name: Download dependencies
         run: ./setup.sh
@@ -111,9 +112,11 @@ jobs:
           file "$APPIMAGE"
           test -e AppDir/AppRun
           test -x AppDir/shared/bin/fasttab
+          test -x AppDir/AppRun.sh
           find AppDir -name '*.desktop' -print -quit | grep -q .
           find AppDir \( -iname 'fasttab.svg' -o -iname 'fasttab.png' \) -print -quit | grep -q .
-          grep -Rqs '^Exec=fasttab daemon$' AppDir
+          grep -Rqs '^Exec=fasttab daemon --replace$' AppDir
+          grep -Fq 'set -- daemon --replace "$@"' AppDir/AppRun.sh
           (
             cd dist
             sha256sum -c "FastTab-${VERSION}-x86_64.AppImage.sha256"
@@ -166,24 +169,27 @@ jobs:
       - name: Write release notes
         if: steps.version.outputs.publish == 'true'
         run: |
-          cat > RELEASE_NOTES.md <<'EOF'
-          FastTab 1.0.0 is the first stable release of the GPU-accelerated X11 window switcher.
-
-          Included downloads:
-
-          - `FastTab-1.0.0-x86_64.AppImage`: portable x86_64 build packaged with quick-sharun.
-          - `FastTab-1.0.0-x86_64.AppImage.zsync`: binary update metadata.
-          - `fasttab-x86_64`: standalone ReleaseSafe binary.
-          - SHA-256 checksum files for the AppImage and standalone binary.
-
-          Shortcuts:
-
-          - `Alt+Tab`: switch across all tracked windows.
-          - `Win+Tab`: switch only between windows on the current workspace.
-          - Add `Shift` for reverse navigation.
-
-          FastTab requires X11 and hardware-accelerated OpenGL.
-          EOF
+          VERSION="${{ steps.version.outputs.version }}"
+          {
+            echo "FastTab ${VERSION} fixes AppImage startup when an older FastTab daemon is already running."
+            echo
+            echo "The AppImage now starts the bundled daemon with --replace, ensuring Win+Tab uses current-workspace switching instead of behavior from a stale process."
+            echo
+            echo "Included downloads:"
+            echo
+            printf -- '- `FastTab-%s-x86_64.AppImage`: portable x86_64 build packaged with quick-sharun.\n' "$VERSION"
+            printf -- '- `FastTab-%s-x86_64.AppImage.zsync`: binary update metadata.\n' "$VERSION"
+            echo '- `fasttab-x86_64`: standalone ReleaseSafe binary.'
+            echo '- SHA-256 checksum files for the AppImage and standalone binary.'
+            echo
+            echo "Shortcuts:"
+            echo
+            echo '- `Alt+Tab`: switch across all tracked windows.'
+            echo '- `Win+Tab`: switch only between windows on the current workspace.'
+            echo '- Add `Shift` for reverse navigation.'
+            echo
+            echo "FastTab requires X11 and hardware-accelerated OpenGL."
+          } > RELEASE_NOTES.md
 
       - name: Publish FastTab release
         if: steps.version.outputs.publish == 'true'
