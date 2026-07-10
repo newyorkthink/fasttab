@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=FastTab
+GenericName=Window Switcher
+Comment=Fast GPU-accelerated X11 window switcher
+Exec=fasttab daemon
+Icon=fasttab
+Terminal=false
+Categories=Utility;System;
+Keywords=window;switcher;alt-tab;x11;i3;
+StartupNotify=false
+StartupWMClass=FastTab
+X-AppImage-Version=1.0.0
