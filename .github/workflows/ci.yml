@@ -66,6 +66,8 @@ jobs:
           grep -Fq '.current_workspace => handleWinTabIncludingSingle' src/main.zig
           grep -Fq 'fn shouldStartSingleWindowFallback' src/main.zig
           grep -Fq 'Win+Tab single-window current-workspace switching started' src/main.zig
+          grep -Fq "--appimage-addenvs 'REUSE_CHECK_DELAY=0'" build_appimage.sh
+          grep -Fq 'zsyncmake -u "$OUTNAME" -o "$APPIMAGE.zsync" "$APPIMAGE"' build_appimage.sh
           if grep -Fq 'const is_super =' src/main.zig; then
             echo "Idle Win+Tab routing must not depend on the delivered MOD4 bit." >&2
             exit 1
@@ -127,6 +129,9 @@ jobs:
           find AppDir \( -iname 'fasttab.svg' -o -iname 'fasttab.png' \) -print -quit | grep -q .
           grep -Rqs '^Exec=fasttab daemon --replace$' AppDir
           grep -Fq 'set -- daemon --replace "$@"' AppDir/AppRun.sh
+          "$APPIMAGE" --appimage-envs | grep -Fxq 'REUSE_CHECK_DELAY=0'
+          grep -Eq "^Filename: FastTab-${VERSION}-x86_64\.AppImage$" "$APPIMAGE.zsync"
+          grep -Eq "^URL: FastTab-${VERSION}-x86_64\.AppImage$" "$APPIMAGE.zsync"
           (
             cd dist
             sha256sum -c "FastTab-${VERSION}-x86_64.AppImage.sha256"
@@ -181,9 +186,9 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           {
-            echo "FastTab ${VERSION} shows Win+Tab even when the current workspace has one window."
+            echo "FastTab ${VERSION} removes the AppImage Ctrl+C shutdown delay."
             echo
-            echo "Win+Tab now opens the current-workspace switcher for every non-empty workspace, including one containing exactly one window. Empty workspaces still do not open the switcher."
+            echo "The AppImage now embeds REUSE_CHECK_DELAY=0 for uruntime, eliminating the several-second mount-reuse wait after Ctrl+C. The zsync metadata is regenerated after the runtime environment is patched."
             echo
             echo "Included downloads:"
             echo
