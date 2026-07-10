@@ -1,0 +1,35 @@
+name: Build symlink fix artifact
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-patch:
+    if: github.head_ref == 'agent/fix-appimage-symlink-launch-1.0.6'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-appimage-symlink-launch-1.0.6
+
+      - name: Apply patch locally
+        run: python3 .github/scripts/apply_symlink_fix.py
+
+      - name: Package patched files
+        run: |
+          mkdir -p patched/src patched/packaging patched/.github/workflows
+          cp src/main.zig patched/src/main.zig
+          cp VERSION patched/VERSION
+          cp packaging/fasttab.desktop patched/packaging/fasttab.desktop
+          cp README.md patched/README.md
+          cp .github/workflows/ci.yml patched/.github/workflows/ci.yml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: symlink-fix-patched-files
+          path: patched
+          if-no-files-found: error
