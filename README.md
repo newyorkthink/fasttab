@@ -112,16 +112,18 @@ To build the portable x86_64 AppImage inside the AnyLinux/quick-sharun environme
 
 ### AppImage
 
-1. Download `FastTab-1.0.0-x86_64.AppImage` and its checksum from the [releases page](https://github.com/newyorkthink/fasttab/releases/latest).
-2. Verify it with `sha256sum -c FastTab-1.0.0-x86_64.AppImage.sha256`.
-3. Run `chmod +x FastTab-1.0.0-x86_64.AppImage`.
-4. Start it with `./FastTab-1.0.0-x86_64.AppImage &`.
+1. Download `FastTab-1.0.1-x86_64.AppImage` and its checksum from the [releases page](https://github.com/newyorkthink/fasttab/releases/latest).
+2. Verify it with `sha256sum -c FastTab-1.0.1-x86_64.AppImage.sha256`.
+3. Run `chmod +x FastTab-1.0.1-x86_64.AppImage`.
+4. Start it with `./FastTab-1.0.1-x86_64.AppImage &`.
+
+The AppImage automatically replaces an older running FastTab daemon so the bundled shortcut behavior takes effect immediately.
 
 ### Standalone binary
 
 1. Download `fasttab-x86_64` and its checksum from the releases page, or build the project locally.
 2. Move it somewhere in your PATH, such as `/usr/local/bin/fasttab`.
-3. Run `fasttab daemon &` to start the daemon in the background.
+3. Run `fasttab daemon --replace &` to replace any older daemon and start the new binary.
 4. Try Alt+Tabbing around.
 
 
