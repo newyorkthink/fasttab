@@ -52,14 +52,22 @@ jobs:
         with:
           version: 0.14.0
 
-      - name: Validate release and packaging files
+      - name: Validate release, source, and packaging files
         run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
           python -m py_compile .github/scripts/*.py
           python -c "import xml.etree.ElementTree as ET; ET.parse('packaging/fasttab.svg')"
           bash -n build_appimage.sh
           desktop-file-validate packaging/fasttab.desktop
-          grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' VERSION
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           grep -Fq 'Exec=fasttab daemon --replace' packaging/fasttab.desktop
+          grep -Fq "X-AppImage-Version=${VERSION}" packaging/fasttab.desktop
+          grep -Fq 'current_workspace' src/app.zig
+          grep -Fq 'application.handleWinTab' src/main.zig
+          if grep -RqsE 'same_app|active_app_class|filterItemsByClass' src; then
+            echo "Retired same-application Win+Tab implementation is still present." >&2
+            exit 1
+          fi
 
       - name: Download dependencies
         run: ./setup.sh
@@ -116,6 +124,7 @@ jobs:
           find AppDir -name '*.desktop' -print -quit | grep -q .
           find AppDir \( -iname 'fasttab.svg' -o -iname 'fasttab.png' \) -print -quit | grep -q .
           grep -Rqs '^Exec=fasttab daemon --replace$' AppDir
+          grep -Rqs "^X-AppImage-Version=${VERSION}$" AppDir
           grep -Fq 'set -- daemon --replace "$@"' AppDir/AppRun.sh
           (
             cd dist
@@ -171,9 +180,11 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           {
-            echo "FastTab ${VERSION} fixes AppImage startup when an older FastTab daemon is already running."
+            echo "FastTab ${VERSION} fixes Win+Tab at the source level."
             echo
-            echo "The AppImage now starts the bundled daemon with --replace, ensuring Win+Tab uses current-workspace switching instead of behavior from a stale process."
+            echo "The retired same-application switcher has been removed from src/app.zig. Win+Tab now uses an explicit current-workspace mode, while Alt+Tab continues to show all tracked windows."
+            echo
+            echo "The AppImage still starts the bundled daemon with --replace so an older process cannot retain the keyboard grab."
             echo
             echo "Included downloads:"
             echo
