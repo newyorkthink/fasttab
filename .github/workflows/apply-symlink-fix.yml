@@ -20,10 +20,10 @@ jobs:
       - name: Apply patch
         run: python3 .github/scripts/apply_symlink_fix.py
 
-      - name: Commit patch
+      - name: Commit source and release metadata
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -A
+          git add src/main.zig VERSION packaging/fasttab.desktop README.md
           git commit -m "Fix AppImage launches through fasttab symlinks"
           git push origin HEAD:agent/fix-appimage-symlink-launch-1.0.6
