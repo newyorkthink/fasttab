@@ -1,109 +1,115 @@
-import subprocess
-import sys
 import os
 import re
+import subprocess
+import sys
 
-def run_git_command(args):
-    """Helper to run git commands and return output string."""
-    try:
-        result = subprocess.run(
-            args, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE, 
-            text=True, 
-            check=True
-        )
+FIX_PREFIXES = ("fix", "fixed", "bugfix", "repair", "resolve")
+IMPROVEMENT_PREFIXES = (
+    "add",
+    "feat",
+    "feature",
+    "improve",
+    "optimize",
+    "harden",
+    "use",
+    "run",
+    "document",
+    "update",
+)
+
+
+def run_git_command(args: list[str], *, allow_failure: bool = False) -> str | None:
+    result = subprocess.run(
+        ["git", *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
         return result.stdout.strip()
-    except subprocess.CalledProcessError:
+    if allow_failure:
         return None
 
-def get_commit_messages():
-    """Gets commit messages since the last tag."""
-    # 1. Try to find the latest tag
-    last_tag = run_git_command(["git", "describe", "--tags", "--abbrev=0"])
-    
-    if last_tag:
-        # Get log from last tag to HEAD
-        revision_range = f"{last_tag}..HEAD"
-    else:
-        # If no tags exist, get everything
-        revision_range = "HEAD"
+    print(result.stderr.strip() or f"git {' '.join(args)} failed", file=sys.stderr)
+    raise SystemExit(result.returncode)
 
-    # 2. Get the commit subjects
-    # %s = subject
-    log_output = run_git_command(["git", "log", revision_range, "--pretty=format:%s"])
-    
+
+def get_commit_messages() -> list[str]:
+    last_tag = run_git_command(["describe", "--tags", "--abbrev=0"], allow_failure=True)
+    revision_range = f"{last_tag}..HEAD" if last_tag else "HEAD"
+    log_output = run_git_command(["log", revision_range, "--pretty=format:%s"])
     if not log_output:
         return []
-        
-    return log_output.split('\n')
+    return [message.strip() for message in log_output.splitlines() if message.strip()]
 
-def main():
-    commits = get_commit_messages()
-    
-    # Categories
-    fixed_bugs = []
-    features = []
-    others = []
-    
+
+def clean_message(message: str) -> str:
+    return re.sub(r":[a-zA-Z0-9_+-]+:", "", message).strip()
+
+
+def classify(message: str) -> str:
+    lowered = clean_message(message).lower()
+    first_word = lowered.split(maxsplit=1)[0].rstrip(":") if lowered else ""
+
+    if ":bug:" in message or first_word in FIX_PREFIXES:
+        return "fixes"
+    if any(marker in message for marker in (":sparkles:", ":children_crossing:", ":zap:")):
+        return "improvements"
+    if first_word in IMPROVEMENT_PREFIXES:
+        return "improvements"
+    return "other"
+
+
+def main() -> None:
+    buckets: dict[str, list[str]] = {
+        "improvements": [],
+        "fixes": [],
+        "other": [],
+    }
     has_robot_changes = False
+    seen: set[str] = set()
 
-    # 3. Categorize
-    for msg in commits:
-        msg = msg.strip()
-        if not msg: 
+    for message in reversed(get_commit_messages()):
+        if message.startswith("Merge "):
             continue
-
-        # Check for robot flag (applies globally)
-        if ":robot:" in msg:
+        if ":robot:" in message:
             has_robot_changes = True
 
-        # Clean the message by removing all :emoji: patterns
-        clean_msg = re.sub(r':[a-zA-Z0-9_+-]+:', '', msg).strip()
+        cleaned = clean_message(message)
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        buckets[classify(message)].append(cleaned)
 
-        # Bucket sorting
-        if ":bug:" in msg:
-            fixed_bugs.insert(0, clean_msg)
-        elif ":sparkles:" in msg or ":children_crossing:" in msg:
-            features.insert(0, clean_msg)
-        else:
-            others.insert(0, clean_msg)
+    sections = (
+        ("improvements", "### New features and improvements"),
+        ("fixes", "### Fixed bugs"),
+        ("other", "### Other"),
+    )
 
-    # 4. Construct Output
-    output_lines = []
-
-    if features:
-        output_lines.append("### New features and improvements")
-        for msg in features:
-            output_lines.append(f"- {msg}")
-        output_lines.append("") # Empty line for spacing
-
-    if fixed_bugs:
-        output_lines.append("### Fixed bugs")
-        for msg in fixed_bugs:
-            output_lines.append(f"- {msg}")
-        output_lines.append("")
-
-    if others:
-        output_lines.append("### Other")
-        for msg in others:
-            output_lines.append(f"- {msg}")
+    output_lines: list[str] = []
+    for bucket_name, heading in sections:
+        entries = buckets[bucket_name]
+        if not entries:
+            continue
+        output_lines.append(heading)
+        output_lines.extend(f"- {entry}" for entry in entries)
         output_lines.append("")
 
     if has_robot_changes:
         if output_lines and output_lines[-1] == "":
-             output_lines.pop()
-        output_lines.append("---")
-        output_lines.append("_Changes made with the help of an LLM_")
+            output_lines.pop()
+        output_lines.extend(("---", "_Changes made with the help of an LLM_"))
 
-    # Join and print to stdout
     final_output = "\n".join(output_lines).strip()
     print(final_output)
 
-    # Write to GITHUB_STEP_SUMMARY if running in Actions
-    if "GITHUB_STEP_SUMMARY" in os.environ:
-        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
-            f.write(final_output + "\n")
+    github_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if github_summary:
+        with open(github_summary, "a", encoding="utf-8") as summary:
+            summary.write(final_output + "\n")
+
 
 if __name__ == "__main__":
     main()

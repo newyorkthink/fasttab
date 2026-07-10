@@ -79,9 +79,6 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
 
-    // Pure logic unit tests (no X11/raylib dependencies)
-    // Each test file needs access to the modules it imports
-
     // UI test (requires C dependencies for DisplayWindow)
     const ui_test = b.addTest(.{
         .root_source_file = b.path("src/tests/ui_test.zig"),
@@ -121,8 +118,28 @@ pub fn build(b: *std.Build) void {
     });
     navigation_test.root_module.addImport("navigation", b.createModule(.{
         .root_source_file = b.path("src/navigation.zig"),
+        .target = target,
+        .optimize = optimize,
     }));
     test_step.dependOn(&b.addRunArtifact(navigation_test).step);
+
+    // Pure hardening regression tests (no X11/raylib dependencies)
+    const hardening_test = b.addTest(.{
+        .root_source_file = b.path("src/tests/hardening_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    hardening_test.root_module.addImport("navigation", b.createModule(.{
+        .root_source_file = b.path("src/navigation.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    hardening_test.root_module.addImport("layout", b.createModule(.{
+        .root_source_file = b.path("src/layout.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    test_step.dependOn(&b.addRunArtifact(hardening_test).step);
 
     // App filter test (filterItemsByClass + SwitchMode infrastructure)
     const app_filter_test = b.addTest(.{

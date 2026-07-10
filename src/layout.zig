@@ -1,5 +1,3 @@
-const std = @import("std");
-
 // Visual design constants
 pub const THUMBNAIL_HEIGHT: u32 = 200;
 pub const MAX_THUMBNAIL_WIDTH: u32 = 356;
@@ -23,28 +21,28 @@ pub const GridLayout = struct {
     total_height: u32,
 };
 
-/// Calculate display dimensions for a thumbnail, preserving aspect ratio
-/// and constraining to fit within max_width x max_height.
-/// Tall/narrow windows are constrained by max_height, wide/short windows by max_width.
+/// Calculate display dimensions for a thumbnail while preserving aspect ratio.
+/// Integer arithmetic avoids floating-point precision loss for very large windows.
 pub fn calculateThumbnailSize(thumb_width: u32, thumb_height: u32, max_width: u32, max_height: u32) ThumbnailSize {
+    if (max_width == 0 or max_height == 0) {
+        return .{ .width = 0, .height = 0 };
+    }
+
     if (thumb_width == 0 or thumb_height == 0) {
         return .{ .width = max_width, .height = max_height };
     }
 
-    const aspect_ratio = @as(f32, @floatFromInt(thumb_width)) / @as(f32, @floatFromInt(thumb_height));
-
-    // Start by fitting to max_height
-    var width = @as(f32, @floatFromInt(max_height)) * aspect_ratio;
-    var height = @as(f32, @floatFromInt(max_height));
-
-    // If width exceeds max_width, constrain by max_width instead
-    if (width > @as(f32, @floatFromInt(max_width))) {
-        width = @as(f32, @floatFromInt(max_width));
-        height = width / aspect_ratio;
+    const width_at_max_height = (@as(u64, max_height) * @as(u64, thumb_width)) / @as(u64, thumb_height);
+    if (width_at_max_height <= max_width) {
+        return .{
+            .width = @max(1, @as(u32, @intCast(width_at_max_height))),
+            .height = max_height,
+        };
     }
 
-    const final_width = if (width < 1.0) 1 else @as(u32, @intFromFloat(width));
-    const final_height = if (height < 1.0) 1 else @as(u32, @intFromFloat(height));
-
-    return .{ .width = final_width, .height = final_height };
+    const height_at_max_width = (@as(u64, max_width) * @as(u64, thumb_height)) / @as(u64, thumb_width);
+    return .{
+        .width = max_width,
+        .height = @max(1, @as(u32, @intCast(height_at_max_width))),
+    };
 }

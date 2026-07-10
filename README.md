@@ -71,8 +71,10 @@ FastTab improves performance in several ways:
  - To use **Win+Tab** (same-app switcher): disable any desktop-environment shortcut that uses `Super+Tab` (e.g. in KDE Plasma: *System Settings → Shortcuts → KWin → Walk Through Windows of Current Application*).
 
 ## Build instructions
-1. Make sure you have Zig installed (version 0.14.0 or later)
-1. You will also need the following development packages installed:
+
+1. Install Zig 0.14.0 or later.
+2. Install `curl`, `tar`, and the required development packages:
+
     - libasound2-dev
     - libgl1-mesa-dev
     - libglu1-mesa-dev
@@ -92,21 +94,19 @@ FastTab improves performance in several ways:
     - libxkbcommon-dev
     - libxrandr-dev
     - libglfw3-dev
-    - libxcb-keysyms1-dev
 
-    On Debian/Ubuntu, you can install them with `sudo apt install <package-names>`.
-
-1. Clone this repository
-1. Run the `setup.sh` script to install Raylib and other dependencies
-1. Build the project with `zig build -Doptimize=ReleaseSafe`
-1. The resulting binary will be located at `./zig-out/bin/fasttab`
+3. Clone this repository.
+4. Run `./setup.sh` to download the pinned Raylib release and STB headers.
+5. Run `zig build test`.
+6. Build with `zig build -Doptimize=ReleaseSafe -Dcpu=baseline`.
+7. The binary will be available at `./zig-out/bin/fasttab`.
 
 ## Installation instructions
 
-1. Follow the build instructions to build the project, or grab the latest binary from the [releases page](https://github.com/newyorkthink/fasttab/releases/latest)
-1. Move the binary somewhere in your PATH (e.g. `/usr/local/bin`)
-1. Run `fasttab daemon &` to start the daemon in the background
-1. You're done! Try Alt+Tabbing around!
+1. Build the project or download the latest binary and checksum from the [releases page](https://github.com/newyorkthink/fasttab/releases/latest).
+2. Move the binary somewhere in your PATH, such as `/usr/local/bin`.
+3. Run `fasttab daemon &` to start the daemon in the background.
+4. Try Alt+Tabbing around.
 
 
 #### ⚠️ DISCLAIMERS

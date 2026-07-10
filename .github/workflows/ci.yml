@@ -3,12 +3,16 @@ name: CI/CD
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: fasttab-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   APT_PACKAGES: >-
@@ -31,11 +35,11 @@ env:
     libxkbcommon-dev
     libxrandr-dev
     libglfw3-dev
-    libxcb-keysyms1-dev
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -47,16 +51,28 @@ jobs:
         with:
           version: 0.14.0
 
-      - name: Download dependencies
-        run: chmod +x ./setup.sh && ./setup.sh
+      - name: Validate release scripts
+        run: python -m py_compile .github/scripts/*.py
 
-      - name: Run Tests
+      - name: Download dependencies
+        run: ./setup.sh
+
+      - name: Run tests
         run: zig build test
+
+      - name: Build ReleaseSafe binary
+        run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
+
+      - name: Validate binary
+        run: test -x zig-out/bin/fasttab
 
   release:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,7 +83,7 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Check for changes
+      - name: Check for release-relevant changes
         id: check_changes
         run: python .github/scripts/should_release.py
 
@@ -83,13 +99,16 @@ jobs:
 
       - name: Download dependencies
         if: steps.check_changes.outputs.should_release == 'true'
-        run: chmod +x ./setup.sh && ./setup.sh
+        run: ./setup.sh
 
-      - name: Build Release
+      - name: Build release
         if: steps.check_changes.outputs.should_release == 'true'
-        run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
+        run: |
+          zig build -Doptimize=ReleaseSafe -Dcpu=baseline
+          test -x zig-out/bin/fasttab
+          sha256sum zig-out/bin/fasttab > zig-out/bin/fasttab.sha256
 
-      - name: Generate Changelog
+      - name: Generate changelog
         id: generate_log
         if: steps.check_changes.outputs.should_release == 'true'
         run: |
@@ -98,7 +117,7 @@ jobs:
             echo 'changelog_content<<EOF'
             echo "$CHANGELOG"
             echo 'EOF'
-          } >> $GITHUB_OUTPUT
+          } >> "$GITHUB_OUTPUT"
 
       - name: Bump version and push tag
         id: tag_version
@@ -107,11 +126,13 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create Release
+      - name: Create release
         if: steps.check_changes.outputs.should_release == 'true'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag_version.outputs.new_tag }}
           name: Release ${{ steps.tag_version.outputs.new_tag }}
           body: ${{ steps.generate_log.outputs.changelog_content }}
-          files: zig-out/bin/fasttab
+          files: |
+            zig-out/bin/fasttab
+            zig-out/bin/fasttab.sha256
