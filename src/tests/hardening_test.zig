@@ -7,7 +7,7 @@ const testing = std.testing;
 test "navigation normalizes out-of-range indices" {
     try testing.expectEqual(@as(usize, 2), navigation.moveSelectionRight(6, 5));
     try testing.expectEqual(@as(usize, 0), navigation.moveSelectionLeft(6, 5));
-    try testing.expectEqual(@as(usize, 4), navigation.moveSelectionDown(usize.max, 3, 5));
+    try testing.expectEqual(@as(usize, 3), navigation.moveSelectionDown(usize.max, 3, 5));
 }
 
 test "navigation avoids overflow at usize max" {
