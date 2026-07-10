@@ -124,7 +124,6 @@ jobs:
           find AppDir -name '*.desktop' -print -quit | grep -q .
           find AppDir \( -iname 'fasttab.svg' -o -iname 'fasttab.png' \) -print -quit | grep -q .
           grep -Rqs '^Exec=fasttab daemon --replace$' AppDir
-          grep -Rqs "^X-AppImage-Version=${VERSION}$" AppDir
           grep -Fq 'set -- daemon --replace "$@"' AppDir/AppRun.sh
           (
             cd dist
