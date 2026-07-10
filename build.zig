@@ -141,7 +141,7 @@ pub fn build(b: *std.Build) void {
     }));
     test_step.dependOn(&b.addRunArtifact(hardening_test).step);
 
-    // App filter test (filterItemsByClass + SwitchMode infrastructure)
+    // Current-workspace filter test
     const app_filter_test = b.addTest(.{
         .root_source_file = b.path("src/tests/app_filter_test.zig"),
         .target = target,

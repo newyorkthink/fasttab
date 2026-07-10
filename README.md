@@ -112,12 +112,12 @@ To build the portable x86_64 AppImage inside the AnyLinux/quick-sharun environme
 
 ### AppImage
 
-1. Download `FastTab-1.0.1-x86_64.AppImage` and its checksum from the [releases page](https://github.com/newyorkthink/fasttab/releases/latest).
-2. Verify it with `sha256sum -c FastTab-1.0.1-x86_64.AppImage.sha256`.
-3. Run `chmod +x FastTab-1.0.1-x86_64.AppImage`.
-4. Start it with `./FastTab-1.0.1-x86_64.AppImage &`.
+1. Download `FastTab-1.0.2-x86_64.AppImage` and its checksum from the [releases page](https://github.com/newyorkthink/fasttab/releases/latest).
+2. Verify it with `sha256sum -c FastTab-1.0.2-x86_64.AppImage.sha256`.
+3. Run `chmod +x FastTab-1.0.2-x86_64.AppImage`.
+4. Start it with `./FastTab-1.0.2-x86_64.AppImage &`.
 
-The AppImage automatically replaces an older running FastTab daemon so the bundled shortcut behavior takes effect immediately.
+The AppImage automatically replaces an older running FastTab daemon. In 1.0.2, `Win+Tab` is implemented directly as a current-workspace mode in `src/app.zig`; the previous same-application mode has been removed.
 
 ### Standalone binary
 
