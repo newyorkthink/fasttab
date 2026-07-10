@@ -120,6 +120,17 @@ quick-sharun --make-appimage
 APPIMAGE="$OUTPATH/$OUTNAME"
 test -s "$APPIMAGE"
 chmod +x "$APPIMAGE"
+
+# uruntime otherwise waits several seconds after Ctrl+C while checking whether
+# the mounted image directory is still in use. Disable that polling delay.
+"$APPIMAGE" --appimage-addenvs 'REUSE_CHECK_DELAY=0'
+"$APPIMAGE" --appimage-envs | grep -Fxq 'REUSE_CHECK_DELAY=0'
+
+# quick-sharun creates zsync metadata before the runtime environment is patched.
+# Regenerate it so the zsync hashes match the final AppImage bytes.
+rm -f "$APPIMAGE.zsync"
+zsyncmake -u "$OUTNAME" -o "$APPIMAGE.zsync" "$APPIMAGE"
+
 rm -f "$OUTPATH/appinfo"
 
 cp zig-out/bin/fasttab "$OUTPATH/fasttab-x86_64"
