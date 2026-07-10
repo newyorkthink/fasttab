@@ -1,5 +1,9 @@
 # ⚡️ FastTab
 
+<p align="center">
+  <img src="packaging/fasttab.svg" alt="FastTab logo" width="160">
+</p>
+
 A lightning fast Alt+Tab switcher for X11 written in Zig using Raylib.
 
 ## Why this exists
@@ -50,6 +54,7 @@ https://github.com/user-attachments/assets/6327cd4b-4750-40c8-ab30-f8d80463887d
 I love my KDE Plasma desktop environment, but I find the default "Thumbnail Grid" switcher to be a bit too slow for my taste: sometimes it would take up to a second to appear, which is too long when you want to quickly switch between windows.
 
 I believe this is because the default switcher has a major performance compromise: it generates window thumbnails on the fly when the switcher is invoked.
+
 This _does_ make sense normally because it means that you're not wasting resources generating thumbnails for windows you might never switch to. And most likely, lots of users don't use Alt+Tab that often.
 
 I am, however, in the opposite camp: I Alt+Tab all the time, my computer can handle the extra cpu (very little) and memory (some) no problem, and even a slight delay irritates me.
@@ -101,10 +106,21 @@ FastTab improves performance in several ways:
 6. Build with `zig build -Doptimize=ReleaseSafe -Dcpu=baseline`.
 7. The binary will be available at `./zig-out/bin/fasttab`.
 
+To build the portable x86_64 AppImage inside the AnyLinux/quick-sharun environment, run `./build_appimage.sh`.
+
 ## Installation instructions
 
-1. Build the project or download the latest binary and checksum from the [releases page](https://github.com/newyorkthink/fasttab/releases/latest).
-2. Move the binary somewhere in your PATH, such as `/usr/local/bin`.
+### AppImage
+
+1. Download `FastTab-1.0.0-x86_64.AppImage` and its checksum from the [releases page](https://github.com/newyorkthink/fasttab/releases/latest).
+2. Verify it with `sha256sum -c FastTab-1.0.0-x86_64.AppImage.sha256`.
+3. Run `chmod +x FastTab-1.0.0-x86_64.AppImage`.
+4. Start it with `./FastTab-1.0.0-x86_64.AppImage &`.
+
+### Standalone binary
+
+1. Download `fasttab-x86_64` and its checksum from the releases page, or build the project locally.
+2. Move it somewhere in your PATH, such as `/usr/local/bin/fasttab`.
 3. Run `fasttab daemon &` to start the daemon in the background.
 4. Try Alt+Tabbing around.
 

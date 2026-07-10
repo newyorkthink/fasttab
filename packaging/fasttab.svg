@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">FastTab</title>
+  <desc id="desc">A stylized fast window switcher logo with layered windows and a lightning-shaped tab.</desc>
+  <defs>
+    <linearGradient id="bg" x1="72" y1="48" x2="448" y2="464" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="144" y1="132" x2="382" y2="384" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="218" y1="150" x2="304" y2="354" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#bae6fd"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="28" y="28" width="456" height="456" rx="108" fill="url(#bg)"/>
+  <rect x="29.5" y="29.5" width="453" height="453" rx="106.5" fill="none" stroke="#334155" stroke-width="3"/>
+
+  <g opacity="0.72">
+    <rect x="90" y="122" width="250" height="220" rx="34" fill="#0f172a" stroke="#475569" stroke-width="12"/>
+    <circle cx="126" cy="158" r="8" fill="#64748b"/>
+    <circle cx="152" cy="158" r="8" fill="#64748b"/>
+    <circle cx="178" cy="158" r="8" fill="#64748b"/>
+  </g>
+
+  <g opacity="0.9">
+    <rect x="142" y="92" width="280" height="244" rx="38" fill="#0b1220" stroke="#1e3a8a" stroke-width="12"/>
+    <rect x="170" y="132" width="224" height="158" rx="24" fill="#0f172a"/>
+    <path d="M170 174h224" stroke="#1e40af" stroke-width="8"/>
+    <circle cx="198" cy="153" r="7" fill="#38bdf8"/>
+    <circle cx="222" cy="153" r="7" fill="#2563eb"/>
+    <circle cx="246" cy="153" r="7" fill="#1d4ed8"/>
+  </g>
+
+  <rect x="106" y="204" width="300" height="210" rx="42" fill="url(#panel)"/>
+  <rect x="118" y="216" width="276" height="186" rx="31" fill="#07111f" fill-opacity="0.92"/>
+  <path d="M118 258h276" stroke="#0ea5e9" stroke-width="8" stroke-opacity="0.85"/>
+  <circle cx="148" cy="238" r="8" fill="#e0f2fe"/>
+  <circle cx="176" cy="238" r="8" fill="#7dd3fc"/>
+  <circle cx="204" cy="238" r="8" fill="#38bdf8"/>
+
+  <path d="M277 275h62l-56 62h44l-96 92 31-72h-51l66-82z" fill="url(#bolt)"/>
+  <path d="M277 275h62l-56 62h44l-96 92 31-72h-51l66-82z" fill="none" stroke="#7dd3fc" stroke-width="7" stroke-linejoin="round"/>
+
+  <path d="M142 383h74" stroke="#1d4ed8" stroke-width="12" stroke-linecap="round"/>
+  <path d="M142 354h104" stroke="#0ea5e9" stroke-width="12" stroke-linecap="round"/>
+</svg>

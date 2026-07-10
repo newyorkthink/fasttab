@@ -16,6 +16,7 @@ concurrency:
 
 env:
   APT_PACKAGES: >-
+    desktop-file-utils
     libasound2-dev
     libgl1-mesa-dev
     libglu1-mesa-dev
@@ -51,8 +52,13 @@ jobs:
         with:
           version: 0.14.0
 
-      - name: Validate release scripts
-        run: python -m py_compile .github/scripts/*.py
+      - name: Validate release and packaging files
+        run: |
+          python -m py_compile .github/scripts/*.py
+          python -c "import xml.etree.ElementTree as ET; ET.parse('packaging/fasttab.svg')"
+          bash -n build_appimage.sh
+          desktop-file-validate packaging/fasttab.desktop
+          grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' VERSION
 
       - name: Download dependencies
         run: ./setup.sh
@@ -66,11 +72,67 @@ jobs:
       - name: Validate binary
         run: test -x zig-out/bin/fasttab
 
-  release:
+  appimage:
     needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    container: ghcr.io/pkgforge-dev/archlinux:latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Pre-install Git
+        run: pacman -Sy --noconfirm git
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Prepare AnyLinux environment
+        uses: pkgforge-dev/anylinux-setup-action@8872fabe63f9a00b35e25b2f46da62a05afc9a7d
+
+      - name: Setup Yay for root execution
+        run: |
+          useradd -m -G wheel builduser || true
+          echo "builduser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          su - builduser -c "git clone https://aur.archlinux.org/yay-bin.git /tmp/yay-bin && cd /tmp/yay-bin && makepkg -si --noconfirm"
+          printf '%s\n' '#!/usr/bin/env bash' 'exec sudo -HE -u builduser /usr/bin/yay "$@"' > /usr/local/bin/yay
+          chmod +x /usr/local/bin/yay
+
+      - name: Build FastTab AppImage
+        run: |
+          chmod +x build_appimage.sh setup.sh
+          ./build_appimage.sh
+
+      - name: Validate AppImage contents
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          APPIMAGE="dist/FastTab-${VERSION}-x86_64.AppImage"
+          test -s "$APPIMAGE"
+          file "$APPIMAGE"
+          test -e AppDir/AppRun
+          test -x AppDir/shared/bin/fasttab
+          find AppDir -name '*.desktop' -print -quit | grep -q .
+          find AppDir \( -iname 'fasttab.svg' -o -iname 'fasttab.png' \) -print -quit | grep -q .
+          grep -Rqs '^Exec=fasttab daemon$' AppDir
+          (
+            cd dist
+            sha256sum -c "FastTab-${VERSION}-x86_64.AppImage.sha256"
+            sha256sum -c fasttab-x86_64.sha256
+          )
+
+      - name: Upload release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: fasttab-release-files
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [test, appimage]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -78,61 +140,59 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-
-      - name: Check for release-relevant changes
-        id: check_changes
-        run: python .github/scripts/should_release.py
-
-      - name: Install system dependencies
-        if: steps.check_changes.outputs.should_release == 'true'
-        run: sudo apt-get update && sudo apt-get install -y $APT_PACKAGES
-
-      - name: Setup Zig
-        if: steps.check_changes.outputs.should_release == 'true'
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.14.0
-
-      - name: Download dependencies
-        if: steps.check_changes.outputs.should_release == 'true'
-        run: ./setup.sh
-
-      - name: Build release
-        if: steps.check_changes.outputs.should_release == 'true'
+      - name: Resolve release version
+        id: version
         run: |
-          zig build -Doptimize=ReleaseSafe -Dcpu=baseline
-          test -x zig-out/bin/fasttab
-          sha256sum zig-out/bin/fasttab > zig-out/bin/fasttab.sha256
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid VERSION: $VERSION" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git rev-parse --verify --quiet "refs/tags/$VERSION" >/dev/null; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Release tag $VERSION already exists; skipping publication."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Generate changelog
-        id: generate_log
-        if: steps.check_changes.outputs.should_release == 'true'
-        run: |
-          CHANGELOG=$(python .github/scripts/collate_commits.py)
-          {
-            echo 'changelog_content<<EOF'
-            echo "$CHANGELOG"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Bump version and push tag
-        id: tag_version
-        if: steps.check_changes.outputs.should_release == 'true'
-        uses: mathieudutour/github-tag-action@v6.1
+      - name: Download release files
+        if: steps.version.outputs.publish == 'true'
+        uses: actions/download-artifact@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          name: fasttab-release-files
+          path: dist
 
-      - name: Create release
-        if: steps.check_changes.outputs.should_release == 'true'
+      - name: Write release notes
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          cat > RELEASE_NOTES.md <<'EOF'
+          FastTab 1.0.0 is the first stable release of the GPU-accelerated X11 window switcher.
+
+          Included downloads:
+
+          - `FastTab-1.0.0-x86_64.AppImage`: portable x86_64 build packaged with quick-sharun.
+          - `FastTab-1.0.0-x86_64.AppImage.zsync`: binary update metadata.
+          - `fasttab-x86_64`: standalone ReleaseSafe binary.
+          - SHA-256 checksum files for the AppImage and standalone binary.
+
+          Shortcuts:
+
+          - `Alt+Tab`: switch across all tracked windows.
+          - `Win+Tab`: switch only between windows on the current workspace.
+          - Add `Shift` for reverse navigation.
+
+          FastTab requires X11 and hardware-accelerated OpenGL.
+          EOF
+
+      - name: Publish FastTab release
+        if: steps.version.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag_version.outputs.new_tag }}
-          name: Release ${{ steps.tag_version.outputs.new_tag }}
-          body: ${{ steps.generate_log.outputs.changelog_content }}
-          files: |
-            zig-out/bin/fasttab
-            zig-out/bin/fasttab.sha256
+          tag_name: ${{ steps.version.outputs.version }}
+          name: FastTab ${{ steps.version.outputs.version }}
+          body_path: RELEASE_NOTES.md
+          files: dist/*
+          draft: false
+          prerelease: false
+          make_latest: true
