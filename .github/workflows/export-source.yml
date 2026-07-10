@@ -9,13 +9,24 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   export:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Apply Win+Tab source refactor
+        if: github.event_name == 'push' && !contains(github.event.head_commit.message, 'Apply Win+Tab source refactor')
+        run: |
+          python tools/refactor_win_tab.py
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/app.zig src/main.zig src/tests/app_filter_test.zig build.zig VERSION
+          git commit -m "Apply Win+Tab source refactor"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
       - uses: actions/upload-artifact@v4
         with:
           name: fasttab-source-export
