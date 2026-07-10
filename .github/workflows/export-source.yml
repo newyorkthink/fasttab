@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/fix-win-tab-source-1.0.2
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
