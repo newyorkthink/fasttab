@@ -114,8 +114,11 @@ jobs:
           find AppDir -name '*.desktop' -print -quit | grep -q .
           find AppDir \( -iname 'fasttab.svg' -o -iname 'fasttab.png' \) -print -quit | grep -q .
           grep -Rqs '^Exec=fasttab daemon$' AppDir
-          sha256sum -c "dist/FastTab-${VERSION}-x86_64.AppImage.sha256"
-          sha256sum -c dist/fasttab-x86_64.sha256
+          (
+            cd dist
+            sha256sum -c "FastTab-${VERSION}-x86_64.AppImage.sha256"
+            sha256sum -c fasttab-x86_64.sha256
+          )
 
       - name: Upload release files
         uses: actions/upload-artifact@v4
