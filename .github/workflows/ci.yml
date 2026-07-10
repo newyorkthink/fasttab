@@ -101,7 +101,17 @@ jobs:
       - name: Build FastTab AppImage
         run: |
           chmod +x build_appimage.sh setup.sh
-          ./build_appimage.sh
+          set -o pipefail
+          ./build_appimage.sh 2>&1 | tee build-appimage.log
+
+      - name: Upload AppImage build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fasttab-appimage-build-log
+          path: build-appimage.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Validate AppImage contents
         run: |
