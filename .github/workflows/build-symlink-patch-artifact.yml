@@ -32,4 +32,5 @@ jobs:
         with:
           name: symlink-fix-patched-files
           path: patched
+          include-hidden-files: true
           if-no-files-found: error
