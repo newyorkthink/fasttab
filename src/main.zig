@@ -9,8 +9,6 @@ const c = @cImport({
 });
 
 const log = std.log.scoped(.fasttab);
-const MRU_CAP: usize = 128;
-const SHOW_DELAY_FRAMES: u8 = 1;
 
 pub fn main() !void {
     installFastSignalExit();
@@ -126,25 +124,14 @@ fn runDaemon() !void {
     var pollfds = [_]std.posix.pollfd{
         .{ .fd = xcb_fd, .events = std.posix.POLL.IN, .revents = 0 },
     };
-    var workspace_switching = false;
-
     while (application.isRunning()) {
         // Poll for XCB events (16ms timeout ~= 60fps)
         _ = std.posix.poll(&pollfds, 16) catch {};
 
         // Always drain XCB events
-        processXcbEvents(&application, &conn, &workspace_switching);
+        processXcbEvents(&application, &conn);
 
-        if (application.state == .idle) {
-            workspace_switching = false;
-        }
-
-        // filtered_items contains shallow copies while Win+Tab is active. Delay
-        // worker updates until switching ends so app.zig does not rebuild the list
-        // using the retired same-application filter.
-        if (!workspace_switching) {
-            application.drainUpdateQueue();
-        }
+        application.drainUpdateQueue();
         application.update();
     }
 
@@ -156,7 +143,7 @@ fn runDaemon() !void {
 }
 
 /// Process all pending XCB events (key press/release, damage)
-fn processXcbEvents(application: *app.App, conn: *x11.Connection, workspace_switching: *bool) void {
+fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
     while (true) {
         const event = x11.xcb.xcb_poll_for_event(conn.conn);
         if (event == null) break;
@@ -184,11 +171,7 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection, workspace_swit
 
                 if (is_tab_key and is_super and !is_alt) {
                     // Super+Tab (no Alt): switch only between windows on the current workspace.
-                    workspace_switching.* = handleWorkspaceTab(
-                        application,
-                        conn,
-                        is_shift or base_keysym == x11.XK_ISO_Left_Tab,
-                    );
+                    application.handleWinTab(is_shift or base_keysym == x11.XK_ISO_Left_Tab);
                 } else if (application.state == .idle) {
                     // Idle: respond to Alt+Tab / Alt+Shift+Tab. Passive grabs guarantee Alt.
                     if (is_tab_key) {
@@ -227,192 +210,5 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection, workspace_swit
             },
         }
 
-        if (application.state == .idle) {
-            workspace_switching.* = false;
-        }
     }
-}
-
-/// Start or continue Win+Tab switching for the current workspace.
-/// app.zig's filtered mode is reused so rendering and navigation keep using
-/// filtered_items without duplicating the switcher state machine.
-fn handleWorkspaceTab(application: *app.App, conn: *x11.Connection, shift: bool) bool {
-    if (application.state == .switching) {
-        if (shift) {
-            application.tab_pressed_during_shift = true;
-            application.selectPrev();
-        } else {
-            application.selectNext();
-        }
-        return application.switch_mode == .same_app;
-    }
-
-    application.mouse_left_was_down = false;
-
-    if (!x11.grabKeyboard(conn.conn, conn.root)) {
-        log.err("Could not grab keyboard, aborting Win+Tab", .{});
-        return false;
-    }
-
-    const active_win = x11.getActiveWindow(conn.conn, conn.root, conn.atoms);
-    if (active_win == 0) {
-        log.debug("Win+Tab: no active window, aborting", .{});
-        x11.ungrabKeyboard(conn.conn);
-        return false;
-    }
-
-    recordMruActivation(application, active_win);
-    reorderItemsByMru(application);
-
-    const current_workspace = getCurrentWorkspace(application, conn, active_win) orelse {
-        log.debug("Win+Tab: current workspace unavailable, aborting", .{});
-        x11.ungrabKeyboard(conn.conn);
-        return false;
-    };
-    application.current_workspace = current_workspace;
-
-    for (application.items.items) |*item| {
-        item.workspace = x11.getWindowDesktop(conn.conn, item.id, conn.atoms);
-    }
-
-    application.filtered_items.clearRetainingCapacity();
-    for (application.items.items) |item| {
-        if (windowBelongsToWorkspace(item.workspace, current_workspace)) {
-            application.filtered_items.append(item) catch {};
-        }
-    }
-
-    if (application.filtered_items.items.len <= 1) {
-        log.debug("Win+Tab: current workspace has {d} switchable window(s)", .{application.filtered_items.items.len});
-        x11.ungrabKeyboard(conn.conn);
-        resetFilteredMode(application);
-        return false;
-    }
-
-    if (application.active_app_class) |class| {
-        application.allocator.free(class);
-        application.active_app_class = null;
-    }
-    application.switch_mode = .same_app;
-
-    const n = application.filtered_items.items.len;
-    if (findFilteredItemIndex(application, active_win)) |current_idx| {
-        application.selected_index = if (shift)
-            (if (current_idx == 0) n - 1 else current_idx - 1)
-        else
-            current_idx;
-    } else if (shift) {
-        application.selected_index = n - 1;
-    } else {
-        application.selected_index = 0;
-    }
-
-    application.show_delay_frames = SHOW_DELAY_FRAMES;
-    application.state = .switching;
-    log.debug("Win+Tab current-workspace switching started (workspace={d}, count={d}, shift={}, selected={d})", .{
-        current_workspace,
-        n,
-        shift,
-        application.selected_index,
-    });
-    return true;
-}
-
-fn getCurrentWorkspace(
-    application: *app.App,
-    conn: *x11.Connection,
-    active_win: x11.xcb.xcb_window_t,
-) ?u32 {
-    var info = x11.getWorkspaceInfo(application.allocator, conn.conn, conn.root, conn.atoms);
-    defer info.deinit();
-
-    if (info.current) |current| {
-        return current;
-    }
-
-    const active_workspace = x11.getWindowDesktop(conn.conn, active_win, conn.atoms) orelse return null;
-    if (active_workspace == 0xFFFFFFFF) return null;
-    return active_workspace;
-}
-
-fn windowBelongsToWorkspace(workspace: ?u32, current_workspace: u32) bool {
-    const value = workspace orelse return true;
-    return value == current_workspace or value == 0xFFFFFFFF;
-}
-
-fn findFilteredItemIndex(application: *app.App, window_id: x11.xcb.xcb_window_t) ?usize {
-    for (application.filtered_items.items, 0..) |item, index| {
-        if (item.id == window_id) return index;
-    }
-    return null;
-}
-
-fn resetFilteredMode(application: *app.App) void {
-    application.switch_mode = .all_windows;
-    application.filtered_items.clearRetainingCapacity();
-    if (application.active_app_class) |class| {
-        application.allocator.free(class);
-        application.active_app_class = null;
-    }
-}
-
-fn recordMruActivation(application: *app.App, window_id: x11.xcb.xcb_window_t) void {
-    if (window_id == 0) return;
-
-    for (application.mru_list.items, 0..) |entry, index| {
-        if (entry == window_id) {
-            _ = application.mru_list.orderedRemove(index);
-            break;
-        }
-    }
-
-    application.mru_list.insert(0, window_id) catch return;
-    if (application.mru_list.items.len > MRU_CAP) {
-        application.mru_list.items.len = MRU_CAP;
-    }
-}
-
-fn reorderItemsByMru(application: *app.App) void {
-    if (application.items.items.len == 0) return;
-
-    var ordered = std.ArrayList(app.DisplayWindow).init(application.allocator);
-    defer ordered.deinit();
-    ordered.ensureTotalCapacity(application.items.items.len) catch return;
-
-    for (application.mru_list.items) |mru_id| {
-        for (application.items.items) |item| {
-            if (item.id == mru_id) {
-                ordered.appendAssumeCapacity(item);
-                break;
-            }
-        }
-    }
-
-    for (application.items.items) |item| {
-        var found = false;
-        for (ordered.items) |ordered_item| {
-            if (ordered_item.id == item.id) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            ordered.appendAssumeCapacity(item);
-        }
-    }
-
-    application.items.clearRetainingCapacity();
-    for (ordered.items) |item| {
-        application.items.appendAssumeCapacity(item);
-    }
-}
-
-test "current workspace filter includes matching windows" {
-    try std.testing.expect(windowBelongsToWorkspace(2, 2));
-    try std.testing.expect(!windowBelongsToWorkspace(1, 2));
-}
-
-test "current workspace filter includes sticky and unknown windows" {
-    try std.testing.expect(windowBelongsToWorkspace(0xFFFFFFFF, 2));
-    try std.testing.expect(windowBelongsToWorkspace(null, 2));
 }

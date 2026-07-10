@@ -23,8 +23,8 @@ pub const SwitcherState = enum {
 
 /// Which set of windows to display
 pub const SwitchMode = enum {
-    all_windows, // Alt+Tab: show everything
-    same_app, // Win+Tab: filter by WM_CLASS of the active window
+    all_windows, // Alt+Tab: show every tracked window
+    current_workspace, // Win+Tab: show windows on the active workspace
 };
 
 // Re-exported so test files can construct DisplayWindow values without importing ui directly.
@@ -71,10 +71,9 @@ pub const App = struct {
     shift_held: bool,
     tab_pressed_during_shift: bool,
 
-    // Win+Tab same-app filtering
+    // Win+Tab current-workspace filtering
     switch_mode: SwitchMode,
     filtered_items: std.ArrayList(ui.DisplayWindow), // non-owning shallow copies; strings owned by items
-    active_app_class: ?[]const u8, // owned; null when not filtering
 
     const MRU_CAP: usize = 128;
 
@@ -156,7 +155,6 @@ pub const App = struct {
             .tab_pressed_during_shift = false,
             .switch_mode = .all_windows,
             .filtered_items = std.ArrayList(ui.DisplayWindow).init(allocator),
-            .active_app_class = null,
         };
 
         self.drainUpdateQueue();
@@ -170,9 +168,6 @@ pub const App = struct {
     pub fn deinit(self: *Self) void {
         // filtered_items are shallow copies; deinit the ArrayList only (do NOT free strings)
         self.filtered_items.deinit();
-        if (self.active_app_class) |class| {
-            self.allocator.free(class);
-        }
 
         // Free owned fields from items (textures are cleaned up via window_textures)
         for (self.items.items) |*item| {
@@ -470,18 +465,15 @@ pub const App = struct {
         self.temp_tasks.clearRetainingCapacity();
 
         if (any_changes) {
-            if (self.switch_mode == .same_app) {
-                // Rebuild filtered view now that self.items has changed.
-                self.buildFilteredItems();
+            if (self.switch_mode == .current_workspace) {
+                self.buildCurrentWorkspaceItems();
 
-                // If all same-app windows disappear while the user is switching, cancel cleanly.
                 if (self.state == .switching and self.filtered_items.items.len == 0) {
-                    log.debug("All same-app windows removed during switching, cancelling", .{});
-                    self.cancelSwitching(); // ungrabs keyboard, hides window, resets switch_mode
+                    log.debug("All current-workspace windows disappeared during switching, cancelling", .{});
+                    self.cancelSwitching();
                     return;
                 }
 
-                // Clamp selected_index against the (now-fresh) filtered list.
                 const dlen = self.displayItems().len;
                 if (dlen == 0) {
                     self.selected_index = 0;
@@ -703,7 +695,7 @@ pub const App = struct {
         log.debug("Alt+Tab switching started (shift={}, selected={d})", .{ shift, self.selected_index });
     }
 
-    /// Handle Win+Tab press: start (or cycle) same-app switching.
+    /// Handle Win+Tab press: switch only between windows on the current workspace.
     pub fn handleWinTab(self: *Self, shift: bool) void {
         if (self.state == .switching) {
             if (shift) {
@@ -716,7 +708,6 @@ pub const App = struct {
         }
 
         self.mouse_left_was_down = false;
-
         if (!x11.grabKeyboard(self.conn.conn, self.conn.root)) {
             log.err("Could not grab keyboard, aborting Win+Tab", .{});
             return;
@@ -729,34 +720,54 @@ pub const App = struct {
             return;
         }
 
-        const class = x11.getWindowClass(self.allocator, self.conn.conn, active_win, self.conn.atoms);
-        if (std.mem.eql(u8, class, "(unknown)")) {
-            log.debug("Win+Tab: active window {x} has no WM_CLASS, aborting", .{active_win});
-            x11.ungrabKeyboard(self.conn.conn);
-            return;
-        }
-        // class is now an owned allocation; store it
-        if (self.active_app_class) |old| self.allocator.free(old);
-        self.active_app_class = class;
-        self.switch_mode = .same_app;
-
+        self.recordMruActivation(active_win);
         self.reorderByMru();
-        self.buildFilteredItems();
+        self.refreshWorkspaceInfo();
+        self.refreshItemWorkspaces();
 
+        const current_workspace = self.current_workspace orelse blk: {
+            const active_workspace = x11.getWindowDesktop(self.conn.conn, active_win, self.conn.atoms) orelse {
+                log.debug("Win+Tab: current workspace unavailable, aborting", .{});
+                x11.ungrabKeyboard(self.conn.conn);
+                return;
+            };
+            if (active_workspace == 0xFFFFFFFF) {
+                log.debug("Win+Tab: active window is sticky and current workspace is unavailable", .{});
+                x11.ungrabKeyboard(self.conn.conn);
+                return;
+            }
+            self.current_workspace = active_workspace;
+            break :blk active_workspace;
+        };
+
+        self.switch_mode = .current_workspace;
+        self.buildCurrentWorkspaceItems();
         if (self.filtered_items.items.len <= 1) {
-            log.debug("Win+Tab: {d} window(s) for '{s}', nothing to switch", .{ self.filtered_items.items.len, class });
+            log.debug("Win+Tab: current workspace {d} has {d} switchable window(s)", .{ current_workspace, self.filtered_items.items.len });
             x11.ungrabKeyboard(self.conn.conn);
             self.resetSwitchMode();
             return;
         }
 
-        const n = self.displayItems().len;
-        self.selected_index = if (shift) n - 1 else 0;
+        const n = self.filtered_items.items.len;
+        var current_index: ?usize = null;
+        for (self.filtered_items.items, 0..) |item, index| {
+            if (item.id == active_win) {
+                current_index = index;
+                break;
+            }
+        }
+        if (current_index) |index| {
+            self.selected_index = if (shift) (if (index == 0) n - 1 else index - 1) else index;
+        } else if (shift) {
+            self.selected_index = n - 1;
+        } else {
+            self.selected_index = 0;
+        }
+
         self.show_delay_frames = SHOW_DELAY_FRAMES;
         self.state = .switching;
-        log.debug("Win+Tab switching started: class='{s}' count={d} shift={} selected={d}", .{
-            class, n, shift, self.selected_index,
-        });
+        log.debug("Win+Tab current-workspace switching started (workspace={d}, count={d}, shift={}, selected={d})", .{ current_workspace, n, shift, self.selected_index });
     }
 
     /// Handle a key event during switching.
@@ -1305,15 +1316,10 @@ pub const App = struct {
         }
     }
 
-    /// Reset to all_windows mode and release same_app filtering state.
-    /// Called at the end of confirm/cancel to ensure clean state for the next switch.
+    /// Reset to all-windows mode after a switch completes or is cancelled.
     fn resetSwitchMode(self: *Self) void {
         self.switch_mode = .all_windows;
         self.filtered_items.clearRetainingCapacity();
-        if (self.active_app_class) |class| {
-            self.allocator.free(class);
-            self.active_app_class = null;
-        }
     }
 
     /// Remove a window ID from the MRU list (linear scan).
@@ -1388,26 +1394,24 @@ pub const App = struct {
         }
     }
 
-    /// Returns the slice to render/navigate: filtered list in same_app mode, full list otherwise.
-    /// This is the single indirection point — all display/nav paths should call this instead of self.items.items.
+    /// Returns the slice used by rendering and navigation.
     pub fn displayItems(self: *Self) []ui.DisplayWindow {
         return switch (self.switch_mode) {
             .all_windows => self.items.items,
-            .same_app => self.filtered_items.items,
+            .current_workspace => self.filtered_items.items,
         };
     }
 
-    /// Populate filtered_items with shallow copies of items whose icon_id matches active_app_class.
-    /// No-op when active_app_class is null. Existing contents are cleared first.
-    pub fn buildFilteredItems(self: *Self) void {
+    /// Rebuild the non-owning current-workspace view.
+    fn buildCurrentWorkspaceItems(self: *Self) void {
         self.filtered_items.clearRetainingCapacity();
-        const class = self.active_app_class orelse return;
-        filterItemsByClass(self.items.items, class, &self.filtered_items);
+        const workspace = self.current_workspace orelse return;
+        filterItemsByWorkspace(self.items.items, workspace, &self.filtered_items);
     }
 
     /// Propagate mutable rendering state from self.items into filtered_items.
     ///
-    /// filtered_items holds VALUE copies taken at buildFilteredItems() time.  Several
+    /// filtered_items holds VALUE copies taken when the current-workspace view is built.  Several
     /// fields are updated on self.items after that point (reacquire, damage, icon/title
     /// worker updates) and the copies go stale.  We sync here rather than on each write
     /// site to keep the rest of the code unchanged.
@@ -1455,14 +1459,14 @@ pub const App = struct {
         for (self.items.items) |*item| {
             item.workspace = x11.getWindowDesktop(self.conn.conn, item.id, self.conn.atoms);
         }
-        if (self.switch_mode == .same_app) self.syncFilteredItems();
+        if (self.switch_mode == .current_workspace) self.buildCurrentWorkspaceItems();
     }
 
     fn render(self: *Self) void {
         // Keep filtered_items in sync with self.items before every draw.
         // processReacquireQueue() and handleDamageEvent() update self.items directly;
         // without this sync filtered_items would have stale thumbnail_ready / cached_snapshot.
-        if (self.switch_mode == .same_app) self.syncFilteredItems();
+        if (self.switch_mode == .current_workspace) self.syncFilteredItems();
 
         const win_x = self.monitor.x + @divTrunc(self.monitor.width - @as(i32, @intCast(self.current_layout.total_width)), 2);
         const win_y = self.monitor.y + @divTrunc(self.monitor.height - @as(i32, @intCast(self.current_layout.total_height)), 2);
@@ -1504,17 +1508,20 @@ pub const App = struct {
     }
 };
 
-/// Filter DisplayWindow items by WM_CLASS (icon_id), appending matches to out.
-/// Items appended to out are shallow (non-owning) copies — strings are NOT duplicated.
-pub fn filterItemsByClass(
+/// Filter DisplayWindow items by workspace.
+/// Sticky windows and windows without workspace metadata remain switchable.
+/// Items appended to out are shallow (non-owning) copies.
+pub fn filterItemsByWorkspace(
     items: []const ui.DisplayWindow,
-    class: []const u8,
+    current_workspace: u32,
     out: *std.ArrayList(ui.DisplayWindow),
 ) void {
     for (items) |item| {
-        if (std.mem.eql(u8, item.icon_id, class)) {
-            out.append(item) catch {};
-        }
+        const belongs = if (item.workspace) |workspace|
+            workspace == current_workspace or workspace == 0xFFFFFFFF
+        else
+            true;
+        if (belongs) out.append(item) catch {};
     }
 }
 
