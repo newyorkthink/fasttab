@@ -112,18 +112,18 @@ To build the portable x86_64 AppImage inside the AnyLinux/quick-sharun environme
 
 ### AppImage
 
-1. Download `FastTab-1.0.6-x86_64.AppImage` and its checksum from the [releases page](https://github.com/newyorkthink/fasttab/releases/latest).
-2. Verify it with `sha256sum -c FastTab-1.0.6-x86_64.AppImage.sha256`.
-3. Run `chmod +x FastTab-1.0.6-x86_64.AppImage`.
-4. Start it with `./FastTab-1.0.6-x86_64.AppImage &`.
+1. Download `FastTab-1.0.7-x86_64.AppImage` and its checksum from the [releases page](https://github.com/newyorkthink/fasttab/releases/latest).
+2. Verify it with `sha256sum -c FastTab-1.0.7-x86_64.AppImage.sha256`.
+3. Run `chmod +x FastTab-1.0.7-x86_64.AppImage`.
+4. Start it with `./FastTab-1.0.7-x86_64.AppImage &`.
 
-The AppImage automatically replaces an older running FastTab daemon. Version 1.0.6 also supports launching through a symlink named `fasttab`; `--replace` no longer mistakes the current AppImage runtime wrapper for an older FastTab daemon.
+FastTab uses single-instance behavior. If FastTab is already running, a later launch prints an error and exits without terminating the existing daemon.
 
 ### Standalone binary
 
 1. Download `fasttab-x86_64` and its checksum from the releases page, or build the project locally.
 2. Move it somewhere in your PATH, such as `/usr/local/bin/fasttab`.
-3. Run `fasttab daemon --replace &` to replace any older daemon and start the new binary.
+3. Run `fasttab daemon &` to start the daemon. A second launch exits immediately if an instance is already running.
 4. Try Alt+Tabbing around.
 
 

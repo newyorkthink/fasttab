@@ -100,12 +100,12 @@ install -Dm755 zig-out/bin/fasttab /usr/local/bin/fasttab
 desktop-file-validate "$DESKTOP"
 quick-sharun /usr/local/bin/fasttab
 
-# A previously installed FastTab daemon may still own the passive Win+Tab grab.
-# Force direct AppImage launches to replace it before starting the bundled daemon.
+# Start the bundled daemon normally. A second FastTab instance exits immediately
+# instead of terminating the already-running daemon.
 awk '
 $0 == "set -- \"$TO_LAUNCH\" \"$@\"" {
   print "if [ \"${TO_LAUNCH##*/}\" = \"fasttab\" ]; then"
-  print "        set -- daemon --replace \"$@\""
+  print "        set -- daemon \"$@\""
   print "fi"
   print ""
 }
@@ -113,7 +113,7 @@ $0 == "set -- \"$TO_LAUNCH\" \"$@\"" {
 ' AppDir/AppRun.sh > AppDir/AppRun.sh.new
 mv AppDir/AppRun.sh.new AppDir/AppRun.sh
 chmod +x AppDir/AppRun.sh
-grep -Fq 'set -- daemon --replace "$@"' AppDir/AppRun.sh
+grep -Fq 'set -- daemon "$@"' AppDir/AppRun.sh
 
 quick-sharun --make-appimage
 
