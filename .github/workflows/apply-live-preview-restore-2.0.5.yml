@@ -33,7 +33,12 @@ jobs:
           python -m py_compile .github/scripts/apply_live_preview_restore_2_0_5.py
           python .github/scripts/apply_live_preview_restore_2_0_5.py
           rm -f .github/scripts/apply_live_preview_restore_2_0_5.py
-          rm -f .github/workflows/apply-live-preview-restore-2.0.5.yml
+
+          # GITHUB_TOKEN cannot push workflow-file changes from a PR workflow.
+          # Keep workflow files unchanged here; they are updated/removed through
+          # the repository API after the source commit lands on the branch.
+          git checkout HEAD -- .github/workflows/ci.yml
+          git checkout HEAD -- .github/workflows/apply-live-preview-restore-2.0.5.yml
           git diff --check
 
       - name: Commit restored preview lifecycle
