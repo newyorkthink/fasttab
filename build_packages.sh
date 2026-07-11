@@ -187,7 +187,7 @@ Name:           fasttab
 Version:        $VERSION
 Release:        1%{?dist}
 Summary:        Fast GPU-accelerated X11 window switcher
-License:        LicenseRef-Proprietary
+License:        Proprietary
 URL:            https://github.com/newyorkthink/fasttab
 
 %description
@@ -240,8 +240,12 @@ fi
 
 if (( BUILD_NATIVE_PACKAGES )); then
   create_package_root
-  build_deb
-  build_rpm
+  if [[ "${FASTTAB_SKIP_DEB:-0}" != "1" ]]; then
+    build_deb
+  fi
+  if [[ "${FASTTAB_SKIP_RPM:-0}" != "1" ]]; then
+    build_rpm
+  fi
 fi
 
 printf 'Created for %s:\n' "$APPIMAGE_ARCH"
