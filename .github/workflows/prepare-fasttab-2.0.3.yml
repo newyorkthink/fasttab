@@ -1,0 +1,100 @@
+name: Prepare FastTab 2.0.3
+
+on:
+  push:
+    branches:
+      - agent/fix-firefox-transparent-preview-2.0.3
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.event.head_commit.message != 'Prepare FastTab 2.0.3 release'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-firefox-transparent-preview-2.0.3
+          fetch-depth: 0
+
+      - name: Update release metadata
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          files = [
+              'VERSION',
+              'src/main.zig',
+              'packaging/fasttab.desktop',
+              'README.md',
+              'README.zh-CN.md',
+              'build_packages.sh',
+              '.github/workflows/ci.yml',
+          ]
+          for name in files:
+              path = Path(name)
+              text = path.read_text(encoding='utf-8')
+              text = text.replace('2.0.2', '2.0.3')
+              path.write_text(text, encoding='utf-8')
+
+          readme = Path('README.md')
+          text = readme.read_text(encoding='utf-8')
+          text = text.replace(
+              'FastTab 2.0.3 is a cross-workspace preview persistence release. It includes:',
+              'FastTab 2.0.3 fixes transparent Firefox previews while retaining the cross-workspace preview fixes. It includes:',
+              1,
+          )
+          text = text.replace(
+              '- Capture the active window once before i3 changes workspace, preserving Firefox, Code Desktop, Antigravity, and other previews across repeated switches.',
+              '- Render Firefox X11 composite thumbnails as opaque when their pixmap alpha channel is zero or undefined.\n- Capture the active window once before i3 changes workspace, preserving Code Desktop, Antigravity, Vivaldi, and other previews across repeated switches.',
+              1,
+          )
+          readme.write_text(text, encoding='utf-8')
+
+          readme_zh = Path('README.zh-CN.md')
+          text = readme_zh.read_text(encoding='utf-8')
+          text = text.replace(
+              'FastTab 2.0.3 是跨工作区预览修复版本，主要包括：',
+              'FastTab 2.0.3 修复 Firefox 透明预览问题，并保留跨工作区预览修复，主要包括：',
+              1,
+          )
+          text = text.replace(
+              '- 在 i3 切换工作区前同步保存当前活动窗口的一张预览，修复 Firefox、Code Desktop、Antigravity 等窗口切换两次后退化为应用图标的问题。',
+              '- Firefox 的 X11 合成缩略图 Alpha 通道为 0 或未定义时，强制按不透明窗口渲染，避免预览完全透明。\n- 在 i3 切换工作区前同步保存当前活动窗口的一张预览，修复 Code Desktop、Antigravity、Vivaldi 等窗口反复切换后退化为应用图标的问题。',
+              1,
+          )
+          readme_zh.write_text(text, encoding='utf-8')
+
+          ci = Path('.github/workflows/ci.yml')
+          text = ci.read_text(encoding='utf-8')
+          old = '''          FastTab 2.0.3 fixes cross-workspace preview loss under i3.
+
+          Highlights:
+
+          - Captures the real active window once before i3 unmaps it during a workspace switch.
+          - Preserves Firefox, Code Desktop, Antigravity, Vivaldi, and other previews across repeated Alt+Tab and Win+Tab sessions.
+          - Saves the last valid texture before GLX invalidation and retries transient failures without deleting the cached preview.
+          - Keeps exit latency low: only the origin window is captured synchronously; remaining snapshots stay incremental.
+          - Retains x86_64 and ARM64/AArch64 AppImage, DEB, and RPM packages.
+'''
+          new = '''          FastTab 2.0.3 fixes transparent Firefox previews and retains the i3 cross-workspace preview corrections.
+
+          Highlights:
+
+          - Forces rendered window-thumbnail alpha to opaque when Firefox exposes valid RGB pixels with a zero or undefined alpha channel.
+          - Captures the real active window once before i3 unmaps it during a workspace switch.
+          - Preserves Firefox, Code Desktop, Antigravity, Vivaldi, and other previews across repeated Alt+Tab and Win+Tab sessions.
+          - Keeps exit latency low and retains x86_64 and ARM64/AArch64 AppImage, DEB, and RPM packages.
+'''
+          if old not in text:
+              raise SystemExit('Expected release notes block not found')
+          ci.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+          git diff --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add VERSION src/main.zig packaging/fasttab.desktop README.md README.zh-CN.md build_packages.sh .github/workflows/ci.yml
+          git commit -m 'Prepare FastTab 2.0.3 release'
+          git push origin HEAD:agent/fix-firefox-transparent-preview-2.0.3
