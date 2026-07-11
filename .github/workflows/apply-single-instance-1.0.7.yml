@@ -1,16 +1,15 @@
 name: Apply single-instance behavior
 
 on:
-  push:
-    branches:
-      - agent/single-instance-1.0.7
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: github.actor != 'github-actions[bot]'
+    if: github.head_ref == 'agent/single-instance-1.0.7' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
