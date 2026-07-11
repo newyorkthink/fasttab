@@ -20,6 +20,24 @@ jobs:
       - name: Restore CI and apply source patch
         run: |
           git show a8980c58d60928c6ca19a668aca02dbe9572c12d:.github/workflows/ci.yml > .github/workflows/ci.yml
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/apply_gpu_black_preview_fix_2_0_4.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''    if count != 1:
+              raise SystemExit(f"{path}: expected one match, found {count}")
+          '''
+          new = '''    if count != 1:
+              if path == "src/app.zig" and old.startswith("        rl.EndTextureMode();") and count > 1:
+                  before, separator, after = text.rpartition(old)
+                  p.write_text(before + new + after, encoding="utf-8")
+                  return
+              raise SystemExit(f"{path}: expected one match, found {count}")
+          '''
+          if old not in text:
+              raise SystemExit('replace_once compatibility patch not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
           python .github/scripts/apply_gpu_black_preview_fix_2_0_4.py
           rm -f .github/scripts/apply_gpu_black_preview_fix_2_0_4.py
           rm -f .github/trigger-gpu-black-preview-fix
