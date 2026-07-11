@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-exec "$ROOT_DIR/build_packages.sh" --appimage-only
+exec bash "$ROOT_DIR/build_packages.sh" --appimage-only
