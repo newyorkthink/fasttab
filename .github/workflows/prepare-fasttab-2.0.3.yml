@@ -99,4 +99,4 @@ jobs:
           git commit -m 'Prepare FastTab 2.0.3 release'
           git push origin HEAD:main
 
-# Registered on main; this commit triggers the one-shot release update.
+# Triggered through a normal pull-request merge after workflow registration.
