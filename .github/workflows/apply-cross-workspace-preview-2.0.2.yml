@@ -21,25 +21,11 @@ jobs:
       - name: Apply source and release changes
         run: python .github/scripts/apply_cross_workspace_preview_2_0_2.py
 
-      - name: Diagnose commit and push
+      - name: Commit generated source fix
         run: |
-          set +e
-          mkdir -p diagnostic
-          git diff --check > diagnostic/result.txt 2>&1
-          echo "diff_check_status=$?" >> diagnostic/result.txt
+          git diff --check
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src/app.zig src/main.zig VERSION README.md README.zh-CN.md build_packages.sh packaging/fasttab.desktop .github/workflows/ci.yml
-          git status --short >> diagnostic/result.txt 2>&1
-          git commit -m "Fix i3 cross-workspace preview persistence" >> diagnostic/result.txt 2>&1
-          echo "commit_status=$?" >> diagnostic/result.txt
-          git push origin HEAD:agent/fix-cross-workspace-preview-2.0.2 >> diagnostic/result.txt 2>&1
-          echo "push_status=$?" >> diagnostic/result.txt
-          exit 0
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: fasttab-2.0.2-push-diagnostic
-          path: diagnostic/result.txt
-          if-no-files-found: error
-          retention-days: 1
+          git add src/app.zig src/main.zig VERSION README.md README.zh-CN.md build_packages.sh packaging/fasttab.desktop
+          git commit -m "Fix i3 cross-workspace preview persistence"
+          git push origin HEAD:agent/fix-cross-workspace-preview-2.0.2
