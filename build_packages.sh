@@ -89,12 +89,19 @@ generate_icon_tree() {
     "$root/usr/share/pixmaps/fasttab.png"
 }
 
+install_package_docs() {
+  local root=$1
+
+  install -Dm644 README.md "$root/usr/share/doc/fasttab/README.md"
+  install -Dm644 README.zh-CN.md "$root/usr/share/doc/fasttab/README.zh-CN.md"
+  install -Dm644 LICENSE.md "$root/usr/share/doc/fasttab/LICENSE.md"
+}
+
 create_package_root() {
   rm -rf "$PACKAGE_ROOT"
   install -Dm755 zig-out/bin/fasttab "$PACKAGE_ROOT/usr/bin/fasttab"
   generate_icon_tree "$PACKAGE_ROOT"
-  install -Dm644 README.md "$PACKAGE_ROOT/usr/share/doc/fasttab/README.md"
-  install -Dm644 README.zh-CN.md "$PACKAGE_ROOT/usr/share/doc/fasttab/README.zh-CN.md"
+  install_package_docs "$PACKAGE_ROOT"
 }
 
 build_appimage() {
@@ -125,6 +132,7 @@ build_appimage() {
   grep -Fq 'set -- daemon "$@"' AppDir/AppRun.sh
 
   generate_icon_tree "$ROOT_DIR/AppDir"
+  install_package_docs "$ROOT_DIR/AppDir"
   install -Dm644 packaging/fasttab.svg AppDir/fasttab.svg
   ln -sfn fasttab.svg AppDir/.DirIcon
 
@@ -187,7 +195,7 @@ Name:           fasttab
 Version:        $VERSION
 Release:        1%{?dist}
 Summary:        Fast GPU-accelerated X11 window switcher
-License:        Proprietary
+License:        GPL-3.0-only
 URL:            https://github.com/newyorkthink/fasttab
 
 %description
@@ -215,6 +223,7 @@ cp -a "$PACKAGE_ROOT"/. %{buildroot}/
 /usr/share/pixmaps/fasttab.png
 /usr/share/doc/fasttab/README.md
 /usr/share/doc/fasttab/README.zh-CN.md
+/usr/share/doc/fasttab/LICENSE.md
 
 %changelog
 * Sat Jul 11 2026 newyorkthink - $VERSION-1

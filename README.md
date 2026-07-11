@@ -156,7 +156,12 @@ DEB and RPM packages install:
 /usr/share/icons/hicolor/256x256/apps/fasttab.png
 /usr/share/icons/hicolor/scalable/apps/fasttab.svg
 /usr/share/pixmaps/fasttab.png
+/usr/share/doc/fasttab/LICENSE.md
 ```
+
+## License
+
+FastTab is distributed under the GNU General Public License version 3 (`GPL-3.0-only`). See `LICENSE.md`.
 
 ## Technical design
 

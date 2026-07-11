@@ -68,12 +68,15 @@ jobs:
           python -m py_compile .github/scripts/*.py
           python -c "import xml.etree.ElementTree as ET; ET.parse('packaging/fasttab.svg')"
           bash -n setup.sh build_appimage.sh build_packages.sh
+          test -s LICENSE.md
           grep -Fq 'X-AppImage-Version=2.0.0' packaging/fasttab.desktop
           grep -Fq 'const FASTTAB_VERSION = "2.0.0";' src/main.zig
           grep -Fq 'fn stdoutPrint' src/main.zig
           grep -Fq 'fn grabWinIsoLeftTab' src/main.zig
           grep -Fq 'XK_ISO_Left_Tab' src/main.zig
           grep -Fq 'README.zh-CN.md' README.md
+          grep -Fq 'License:        GPL-3.0-only' build_packages.sh
+          grep -Fq '/usr/share/doc/fasttab/LICENSE.md' build_packages.sh
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y $APT_PACKAGES
@@ -164,7 +167,7 @@ jobs:
           cp -a deb-dist/. dist/
           cp -a rpm-dist/. dist/
 
-      - name: Validate release files and icon hierarchy
+      - name: Validate release files, license, and icon hierarchy
         env:
           APPIMAGE_ARCH: ${{ matrix.appimage_arch }}
           DEB_ARCH: ${{ matrix.deb_arch }}
@@ -188,16 +191,20 @@ jobs:
           done
           test -s AppDir/usr/share/icons/hicolor/scalable/apps/fasttab.svg
           test -s AppDir/usr/share/pixmaps/fasttab.png
+          test -s AppDir/usr/share/doc/fasttab/LICENSE.md
 
           dpkg-deb --field "$DEB" Package Version Architecture
           dpkg-deb --contents "$DEB" | grep -Fq './usr/share/icons/hicolor/256x256/apps/fasttab.png'
           dpkg-deb --contents "$DEB" | grep -Fq './usr/share/icons/hicolor/scalable/apps/fasttab.svg'
           dpkg-deb --contents "$DEB" | grep -Fq './usr/share/pixmaps/fasttab.png'
+          dpkg-deb --contents "$DEB" | grep -Fq './usr/share/doc/fasttab/LICENSE.md'
 
           rpm -qp "$RPM"
+          rpm -qp --qf '%{LICENSE}\n' "$RPM" | grep -Fxq 'GPL-3.0-only'
           rpm -qlp "$RPM" | grep -Fxq '/usr/share/icons/hicolor/256x256/apps/fasttab.png'
           rpm -qlp "$RPM" | grep -Fxq '/usr/share/icons/hicolor/scalable/apps/fasttab.svg'
           rpm -qlp "$RPM" | grep -Fxq '/usr/share/pixmaps/fasttab.png'
+          rpm -qlp "$RPM" | grep -Fxq '/usr/share/doc/fasttab/LICENSE.md'
 
           (
             cd dist
@@ -240,9 +247,11 @@ jobs:
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if git rev-parse --verify --quiet "refs/tags/$VERSION" >/dev/null; then
+
+          if git rev-parse --verify --quiet "refs/tags/$VERSION" >/dev/null && \
+             git show "refs/tags/$VERSION:build_packages.sh" | grep -Fq 'License:        GPL-3.0-only'; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "Release tag $VERSION already exists; skipping publication."
+            echo "FastTab $VERSION already contains the corrected GPL package metadata."
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
@@ -291,6 +300,7 @@ jobs:
           - AppImage, DEB, and RPM packages for both architectures.
           - Complete hicolor icon hierarchy at 16, 32, 64, 128, and 256 pixels, scalable SVG, and `/usr/share/pixmaps/fasttab.png`.
           - English and Simplified Chinese documentation.
+          - Correct GPL-3.0-only package metadata and bundled license text.
 
           Release files:
 
@@ -305,14 +315,23 @@ jobs:
           FastTab requires Linux, X11, and hardware-accelerated OpenGL.
           NOTES
 
+      - name: Move the 2.0.0 tag to the corrected release commit
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git tag -f "$VERSION" "$GITHUB_SHA"
+          git push --force origin "refs/tags/$VERSION"
+
       - name: Publish FastTab 2.0.0
         if: steps.version.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: 2.0.0
+          target_commitish: ${{ github.sha }}
           name: FastTab 2.0.0
           body_path: RELEASE_NOTES.md
           files: dist/*
+          overwrite_files: true
           draft: false
           prerelease: false
           make_latest: true
