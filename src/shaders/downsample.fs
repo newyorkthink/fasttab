@@ -37,9 +37,5 @@ void main() {
         }
     }
 
-    // X11 clients such as Firefox may expose valid RGB pixels with an undefined
-    // or zero alpha channel. Window previews are always opaque, so preserve RGB
-    // and replace only alpha instead of letting the desktop show through.
-    vec4 averaged = color / totalSamples;
-    finalColor = vec4(averaged.rgb * fragColor.rgb, fragColor.a);
+    finalColor = (color / totalSamples) * fragColor;
 }
