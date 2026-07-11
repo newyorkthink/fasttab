@@ -60,14 +60,15 @@ jobs:
           bash -n build_appimage.sh
           desktop-file-validate packaging/fasttab.desktop
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          grep -Fq 'Exec=fasttab daemon --replace' packaging/fasttab.desktop
+          grep -Fq 'Exec=fasttab daemon' packaging/fasttab.desktop
           grep -Fq "X-AppImage-Version=${VERSION}" packaging/fasttab.desktop
           grep -Fq 'fn routeIdleTab' src/main.zig
           grep -Fq '.current_workspace => handleWinTabIncludingSingle' src/main.zig
           grep -Fq 'fn shouldStartSingleWindowFallback' src/main.zig
           grep -Fq 'Win+Tab single-window current-workspace switching started' src/main.zig
-          grep -Fq 'fn shouldTerminateExistingFastTab' src/main.zig
-          grep -Fq 'process_group != my_process_group' src/main.zig
+          grep -Fq 'const InstanceLock = struct' src/main.zig
+          grep -Fq 'c.flock(file.handle, c.LOCK_EX | c.LOCK_NB)' src/main.zig
+          grep -Fq 'Error: an instance of FastTab is already running.' src/main.zig
           grep -Fq -- "--appimage-addenvs 'REUSE_CHECK_DELAY=0'" build_appimage.sh
           grep -Fq 'zsyncmake -u "$OUTNAME" -o "$APPIMAGE.zsync" "$APPIMAGE"' build_appimage.sh
           if grep -Fq 'const is_super =' src/main.zig; then
@@ -129,8 +130,8 @@ jobs:
           test -x AppDir/AppRun.sh
           find AppDir -name '*.desktop' -print -quit | grep -q .
           find AppDir \( -iname 'fasttab.svg' -o -iname 'fasttab.png' \) -print -quit | grep -q .
-          grep -Rqs '^Exec=fasttab daemon --replace$' AppDir
-          grep -Fq 'set -- daemon --replace "$@"' AppDir/AppRun.sh
+          grep -Rqs '^Exec=fasttab daemon$' AppDir
+          grep -Fq 'set -- daemon "$@"' AppDir/AppRun.sh
           "$APPIMAGE" --appimage-envs | grep -Fxq 'REUSE_CHECK_DELAY=0'
           grep -Eq "^Filename: FastTab-${VERSION}-x86_64\.AppImage$" "$APPIMAGE.zsync"
           grep -Eq "^URL: FastTab-${VERSION}-x86_64\.AppImage$" "$APPIMAGE.zsync"
@@ -188,9 +189,9 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           {
-            echo "FastTab ${VERSION} fixes AppImage launches through a fasttab symlink."
+            echo "FastTab ${VERSION} uses simple single-instance startup behavior."
             echo
-            echo "The --replace scan now ignores processes in the current launch process group, preventing an AppImage runtime invoked through a symlink named fasttab from killing its own wrapper."
+            echo "If FastTab is already running, a later launch now prints an error and exits immediately. It no longer terminates or replaces the existing daemon."
             echo
             echo "Included downloads:"
             echo
