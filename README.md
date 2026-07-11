@@ -134,7 +134,7 @@ The binary is written to `zig-out/bin/fasttab`.
 To create all packages on a supported native architecture:
 
 ```bash
-./build_packages.sh
+bash ./build_packages.sh
 ```
 
 To create only the AppImage:
