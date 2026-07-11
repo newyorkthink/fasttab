@@ -5,6 +5,7 @@ const app = @import("app.zig");
 
 const c = @cImport({
     @cInclude("signal.h");
+    @cInclude("sys/file.h");
     @cInclude("unistd.h");
 });
 
@@ -33,23 +34,19 @@ pub fn main() !void {
     var args_iter = std.process.args();
     _ = args_iter.next(); // skip program name
 
-    var replace = false;
-
     while (args_iter.next()) |arg| {
-        if (std.mem.eql(u8, arg, "--replace")) {
-            replace = true;
-        } else if (std.mem.eql(u8, arg, "daemon") or std.mem.eql(u8, arg, "--daemon")) {} else {
-            std.debug.print("Unknown command: {s}\n", .{arg});
-            std.debug.print("Usage: fasttab [daemon] [--replace]\n", .{});
-            std.process.exit(1);
-        }
+        if (std.mem.eql(u8, arg, "daemon") or std.mem.eql(u8, arg, "--daemon")) continue;
+
+        std.debug.print("Unknown command: {s}\n", .{arg});
+        std.debug.print("Usage: fasttab [daemon]\n", .{});
+        std.process.exit(1);
     }
 
-    if (replace) {
-        try killExistingInstance();
-        // Give it a moment to die and release X11 grabs
-        std.time.sleep(200 * std.time.ns_per_ms);
-    }
+    var instance_lock = (try InstanceLock.acquire()) orelse {
+        std.debug.print("Error: an instance of FastTab is already running.\n", .{});
+        std.process.exit(1);
+    };
+    defer instance_lock.deinit();
 
     return runDaemon();
 }
@@ -64,51 +61,38 @@ fn installFastSignalExit() void {
     _ = c.signal(c.SIGTERM, fastExitFromSignal);
 }
 
-fn shouldTerminateExistingFastTab(
-    comm: []const u8,
-    pid: i32,
-    my_pid: i32,
-    process_group: i32,
-    my_process_group: i32,
-) bool {
-    if (!std.mem.eql(u8, comm, "fasttab")) return false;
-    if (pid == my_pid) return false;
+const InstanceLock = struct {
+    file: std.fs.File,
 
-    // When the AppImage is launched through a symlink named `fasttab`, its
-    // uruntime wrapper has the same process name. It belongs to this launch's
-    // process group and must not be killed by --replace.
-    return process_group < 0 or process_group != my_process_group;
-}
+    fn acquire() !?InstanceLock {
+        var path_buf: [64]u8 = undefined;
+        const path = try std.fmt.bufPrint(&path_buf, "/tmp/fasttab-{d}.lock", .{c.getuid()});
+        const file = try std.fs.createFileAbsolute(path, .{
+            .read = true,
+            .truncate = false,
+            .mode = 0o600,
+        });
+        errdefer file.close();
 
-fn killExistingInstance() !void {
-    const my_pid: i32 = @intCast(std.c.getpid());
-    const my_process_group: i32 = @intCast(c.getpgrp());
-    var dir = try std.fs.openDirAbsolute("/proc", .{ .iterate = true });
-    defer dir.close();
+        if (c.flock(file.handle, c.LOCK_EX | c.LOCK_NB) != 0) {
+            file.close();
+            return null;
+        }
 
-    var iterator = dir.iterate();
-    while (try iterator.next()) |entry| {
-        if (entry.kind != .directory) continue;
-        const pid = std.fmt.parseInt(i32, entry.name, 10) catch continue;
-        if (pid == my_pid) continue;
+        try file.setEndPos(0);
+        try file.seekTo(0);
+        var pid_buf: [32]u8 = undefined;
+        const pid_text = try std.fmt.bufPrint(&pid_buf, "{d}\n", .{std.c.getpid()});
+        try file.writeAll(pid_text);
 
-        var buf: [256]u8 = undefined;
-        const comm_path = try std.fmt.bufPrint(&buf, "/proc/{d}/comm", .{pid});
-        const file = std.fs.openFileAbsolute(comm_path, .{}) catch continue;
-        defer file.close();
-
-        const bytes_read = try file.readAll(&buf);
-        const comm = std.mem.trimRight(u8, buf[0..bytes_read], "\n");
-
-        const process_group: i32 = @intCast(c.getpgid(pid));
-        if (!shouldTerminateExistingFastTab(comm, pid, my_pid, process_group, my_process_group)) continue;
-
-        std.debug.print("Killing existing instance (PID {d})...\n", .{pid});
-        std.posix.kill(pid, std.posix.SIG.TERM) catch |err| {
-            std.debug.print("Failed to kill PID {d}: {}\n", .{ pid, err });
-        };
+        return .{ .file = file };
     }
-}
+
+    fn deinit(self: *InstanceLock) void {
+        _ = c.flock(self.file.handle, c.LOCK_UN);
+        self.file.close();
+    }
+};
 
 /// Run the daemon with XCB key grabbing
 fn runDaemon() !void {
@@ -288,14 +272,6 @@ fn handleWinTabIncludingSingle(application: *app.App, conn: *x11.Connection, shi
     application.show_delay_frames = SHOW_DELAY_FRAMES;
     application.state = .switching;
     log.debug("Win+Tab single-window current-workspace switching started (workspace={d})", .{current_workspace});
-}
-
-test "replacement ignores the current AppImage process group" {
-    try std.testing.expect(!shouldTerminateExistingFastTab("fasttab", 100, 100, 20, 20));
-    try std.testing.expect(!shouldTerminateExistingFastTab("fasttab", 101, 100, 20, 20));
-    try std.testing.expect(shouldTerminateExistingFastTab("fasttab", 101, 100, 21, 20));
-    try std.testing.expect(shouldTerminateExistingFastTab("fasttab", 101, 100, -1, 20));
-    try std.testing.expect(!shouldTerminateExistingFastTab("other", 101, 100, 21, 20));
 }
 
 test "idle Alt+Tab routes to all windows" {
