@@ -108,14 +108,29 @@ FastTab improves performance in several ways:
 
 To build the portable x86_64 AppImage inside the AnyLinux/quick-sharun environment, run `./build_appimage.sh`.
 
+## Command-line options
+
+```text
+fasttab                  Start the daemon (default)
+fasttab daemon           Start the daemon explicitly
+fasttab --daemon         Start the daemon explicitly
+fasttab help             Show help
+fasttab -h, --help       Show help
+fasttab version          Show the installed version
+fasttab -v, -V, --version
+                         Show the installed version
+```
+
+Unknown arguments return exit status `2` and suggest `fasttab --help`.
+
 ## Installation instructions
 
 ### AppImage
 
-1. Download `FastTab-1.0.7-x86_64.AppImage` and its checksum from the [releases page](https://github.com/newyorkthink/fasttab/releases/latest).
-2. Verify it with `sha256sum -c FastTab-1.0.7-x86_64.AppImage.sha256`.
-3. Run `chmod +x FastTab-1.0.7-x86_64.AppImage`.
-4. Start it with `./FastTab-1.0.7-x86_64.AppImage &`.
+1. Download `FastTab-1.0.8-x86_64.AppImage` and its checksum from the [releases page](https://github.com/newyorkthink/fasttab/releases/latest).
+2. Verify it with `sha256sum -c FastTab-1.0.8-x86_64.AppImage.sha256`.
+3. Run `chmod +x FastTab-1.0.8-x86_64.AppImage`.
+4. Start it with `./FastTab-1.0.8-x86_64.AppImage &`.
 
 FastTab uses single-instance behavior. If FastTab is already running, a later launch prints an error and exits without terminating the existing daemon.
 
