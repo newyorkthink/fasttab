@@ -227,7 +227,7 @@ cp -a "$PACKAGE_ROOT"/. %{buildroot}/
 
 %changelog
 * Sat Jul 11 2026 newyorkthink - $VERSION-1
-- FastTab 2.0.2 cross-workspace preview persistence fix
+- FastTab 2.0.6 workspace-bar clipping fix
 SPEC
 
   rpmbuild --define "_topdir $RPM_TOP" --target "$RPM_ARCH" -bb "$spec"

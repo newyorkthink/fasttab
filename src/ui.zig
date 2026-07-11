@@ -204,7 +204,13 @@ pub fn calculateBestLayoutWithin(items: []DisplayWindow, max_grid_width: u32, ma
     return layout;
 }
 
-pub fn calculateBestLayoutForMonitor(items: []DisplayWindow, monitor_width: i32, monitor_height: i32, workspace_names: []const []const u8) GridLayout {
+pub fn calculateBestLayoutForMonitor(
+    items: []DisplayWindow,
+    monitor_width: i32,
+    monitor_height: i32,
+    font: rl.Font,
+    workspace_names: []const []const u8,
+) GridLayout {
     const monitor_w: u32 = if (monitor_width > 0) @intCast(monitor_width) else MAX_GRID_WIDTH;
     const monitor_h: u32 = if (monitor_height > 0) @intCast(monitor_height) else MAX_GRID_HEIGHT;
 
@@ -217,7 +223,7 @@ pub fn calculateBestLayoutForMonitor(items: []DisplayWindow, monitor_width: i32,
         max_total_height;
 
     var layout = calculateBestLayoutWithin(items, max_grid_width, max_grid_height);
-    addWorkspaceBarToLayout(&layout, workspace_names);
+    addWorkspaceBarToLayout(&layout, font, workspace_names, max_grid_width);
     return layout;
 }
 
@@ -315,7 +321,6 @@ fn utf8PrefixLen(text: []const u8, max_len: usize) usize {
     }
     return i;
 }
-
 
 fn isFontFile(name: []const u8) bool {
     return std.mem.endsWith(u8, name, ".ttf") or
@@ -538,14 +543,25 @@ fn drawTruncatedTextBold(font: rl.Font, text: []const u8, x: f32, y: f32, font_s
     drawTruncatedTextWithWeight(font, text, x, y, font_size, max_width, color, true);
 }
 
-
-
 pub fn workspaceBarOffset(workspace_names: []const []const u8) u32 {
     return if (workspace_names.len == 0) 0 else WORKSPACE_BAR_HEIGHT + WORKSPACE_BAR_SPACING;
 }
 
-pub fn addWorkspaceBarToLayout(layout: *GridLayout, workspace_names: []const []const u8) void {
+pub fn addWorkspaceBarToLayout(
+    layout: *GridLayout,
+    font: rl.Font,
+    workspace_names: []const []const u8,
+    max_width: u32,
+) void {
     layout.total_height += workspaceBarOffset(workspace_names);
+    if (workspace_names.len == 0) return;
+
+    fitLayoutToWorkspaceBar(layout, workspaceBarWidth(font, workspace_names), max_width);
+}
+
+pub fn fitLayoutToWorkspaceBar(layout: *GridLayout, bar_width: u32, max_width: u32) void {
+    const required_width = PADDING * 2 + bar_width;
+    layout.total_width = @max(layout.total_width, @min(required_width, max_width));
 }
 
 fn measureUiText(font: rl.Font, text: []const u8, font_size: f32) rl.Vector2 {
@@ -563,14 +579,19 @@ fn workspaceItemWidth(font: rl.Font, name: []const u8) u32 {
     return text_w + WORKSPACE_ITEM_PADDING_X * 2;
 }
 
+fn workspaceBarWidth(font: rl.Font, workspace_names: []const []const u8) u32 {
+    var width: u32 = 0;
+    for (workspace_names, 0..) |name, i| {
+        width += workspaceItemWidth(font, name);
+        if (i + 1 < workspace_names.len) width += WORKSPACE_ITEM_SPACING;
+    }
+    return width;
+}
+
 fn drawWorkspaceBar(font: rl.Font, workspace_names: []const []const u8, current_workspace: ?u32, total_width: u32) void {
     if (workspace_names.len == 0) return;
 
-    var bar_width: u32 = 0;
-    for (workspace_names, 0..) |name, i| {
-        bar_width += workspaceItemWidth(font, name);
-        if (i + 1 < workspace_names.len) bar_width += WORKSPACE_ITEM_SPACING;
-    }
+    const bar_width = workspaceBarWidth(font, workspace_names);
 
     const available_width = if (total_width > PADDING * 2) total_width - PADDING * 2 else total_width;
     const start_x: f32 = if (bar_width <= available_width)
@@ -609,7 +630,6 @@ fn drawWorkspaceBar(font: rl.Font, workspace_names: []const []const u8, current_
         x += @as(f32, @floatFromInt(item_w + WORKSPACE_ITEM_SPACING));
     }
 }
-
 
 fn workspaceLabel(workspace_names: []const []const u8, workspace: ?u32) ?[]const u8 {
     const idx = workspace orelse return null;

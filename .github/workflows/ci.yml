@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euxo pipefail
           VERSION="$(tr -d '[:space:]' < VERSION)"
-          [[ "$VERSION" == "2.0.5" ]]
+          [[ "$VERSION" == "2.0.6" ]]
           python -m py_compile .github/scripts/*.py
           python -c "import xml.etree.ElementTree as ET; ET.parse('packaging/fasttab.svg')"
           bash -n setup.sh build_appimage.sh build_packages.sh
@@ -274,10 +274,12 @@ jobs:
         if: steps.version.outputs.publish == 'true'
         run: |
           cat > RELEASE_NOTES.md <<'NOTES'
-          FastTab 2.0.5 restores the generic upstream live-preview lifecycle while preserving the fork's i3 workspace features.
+          FastTab 2.0.6 keeps the generic live-preview lifecycle and fixes workspace-bar clipping in narrow single-window layouts.
 
           Highlights:
 
+          - Sizes the switcher to the measured workspace bar so the last workspace remains fully visible.
+          - Keeps a single window card centered when the workspace bar determines the container width.
           - Removes application-specific Edge, Remmina, and root-framebuffer capture rules.
           - Releases XComposite/GLX bindings while hidden and reacquires fresh backing pixmaps on show.
           - Restores one common dynamic preview path for Firefox, Chrome/Chromium, Edge, video, Remmina, and other X11 clients.

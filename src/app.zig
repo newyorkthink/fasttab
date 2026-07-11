@@ -14,7 +14,6 @@ const PROFILE_SLOW_REACQUIRE_WINDOW_US: i128 = 4_000;
 const PROFILE_SLOW_REACQUIRE_FRAME_US: i128 = 8_000;
 
 /// State machine for the Alt+Tab switcher
-
 /// State machine for the Alt+Tab switcher
 pub const SwitcherState = enum {
     idle,
@@ -580,6 +579,7 @@ pub const App = struct {
             self.displayItems(),
             self.monitor.width,
             self.monitor.height,
+            self.font,
             self.workspace_names.items,
         );
         const after_layout_ns = std.time.nanoTimestamp();
@@ -1027,8 +1027,6 @@ pub const App = struct {
 
     /// Refresh mapped windows in place. If GLX rejects a refresh, keep the old
     /// cached snapshot and let the progressive reacquire queue retry later.
-
-
     /// Ensure one visible origin window has a valid live texture before
     /// taking its fallback frame. This preserves cross-workspace previews without
     /// keeping every GLX pixmap bound while FastTab is hidden.
@@ -1072,8 +1070,6 @@ pub const App = struct {
         return self.cacheSnapshotForItem(item);
     }
 
-
-
     /// Copy one live thumbnail into a replacement FBO. The previous snapshot is
     /// unloaded only after the new one succeeds, so no refresh can erase fallback data.
     fn cacheSnapshotForItem(self: *Self, item: *ui.DisplayWindow) bool {
@@ -1116,8 +1112,6 @@ pub const App = struct {
 
     /// Perform no more than one GPU snapshot copy while hidden. Cheaply skip
     /// ineligible items until one copy succeeds or the pass is complete.
-
-
     const REACQUIRE_FRAME_BUDGET_NS: i128 = 10 * std.time.ns_per_ms;
 
     /// Incrementally reacquire GLX textures during update() to avoid blocking showWindow.
@@ -1493,6 +1487,7 @@ pub const App = struct {
             self.displayItems(),
             self.monitor.width,
             self.monitor.height,
+            self.font,
             self.workspace_names.items,
         );
 

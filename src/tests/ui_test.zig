@@ -239,6 +239,22 @@ test "calculateRowWidth with multiple items" {
     try testing.expectEqual(@as(u32, 100 + ui.SPACING + 150 + ui.SPACING + 200), width);
 }
 
+test "workspace bar expands a single-window layout without exceeding monitor width" {
+    var grid = GridLayout{
+        .columns = 1,
+        .rows = 1,
+        .item_height = MAX_H,
+        .total_width = 380,
+        .total_height = 280,
+    };
+
+    ui.fitLayoutToWorkspaceBar(&grid, 362, 1200);
+    try testing.expectEqual(@as(u32, 362 + ui.PADDING * 2), grid.total_width);
+
+    ui.fitLayoutToWorkspaceBar(&grid, 1500, 1200);
+    try testing.expectEqual(@as(u32, 1200), grid.total_width);
+}
+
 test "calculateRowWidth with partial row" {
     var items = [_]DisplayWindow{
         testWindowWithDisplay(100, 100, 100, 100),
@@ -297,7 +313,6 @@ test "grid layout with 50 items" {
     try testing.expect(grid.total_width <= ui.MAX_GRID_WIDTH);
     try testing.expect(grid.total_height <= ui.MAX_GRID_HEIGHT);
 }
-
 
 // --- display text sanitization tests ---
 
