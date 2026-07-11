@@ -146,7 +146,3 @@ if old_notes not in ci:
     raise SystemExit("ci.yml: expected 2.0.2 release notes block not found")
 ci = ci.replace(old_notes, new_notes, 1)
 ci_path.write_text(ci, encoding="utf-8")
-
-# Remove the one-shot implementation files from the resulting branch.
-Path(".github/scripts/apply_cross_workspace_preview_2_0_2.py").unlink()
-Path(".github/workflows/apply-cross-workspace-preview-2.0.2.yml").unlink()
