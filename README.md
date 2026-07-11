@@ -10,19 +10,18 @@
 
 FastTab is a fast GPU-accelerated Alt+Tab and Win+Tab window switcher for X11, written in Zig with Raylib and OpenGL.
 
-## FastTab 2.0.2
+## FastTab 2.0.4
 
-FastTab 2.0.2 is a cross-workspace preview persistence release. It includes:
+FastTab 2.0.4 fixes black previews from GPU-backed X11 clients while retaining the previous Firefox and i3 fixes. It includes:
 
-- Capture the active window once before i3 changes workspace, preserving Firefox, Code Desktop, Antigravity, and other previews across repeated switches.
+- Use a composed root-framebuffer capture for Microsoft Edge/Chromium video and Remmina windows whose XComposite pixmaps are black.
+- Refresh those fallback previews immediately before FastTab appears, preserving the currently visible frame.
+- Preserve Firefox previews with zero or undefined pixmap alpha.
+- Capture the active window once before i3 changes workspace, preserving Code Desktop, Antigravity, Vivaldi, and other previews across repeated switches.
 - Build cached previews incrementally after hiding, removing the pause when `Alt` or `Super` is released.
 - Replace unsupported Nerd Font and Powerline private-use title glyphs with a plain separator instead of `?`.
 - Reliable global `Alt+Tab` switching and current-workspace `Win+Tab` switching.
-- Correct `Win+Shift+Tab` handling for both ordinary `Tab` and layout-specific `ISO_Left_Tab` keycodes.
-- CLI help and version output on standard output; errors remain on standard error.
-- Native x86_64 and ARM64 builds.
-- AppImage, DEB, and RPM packages for both architectures.
-- Complete desktop icon installation at 16, 32, 64, 128, and 256 pixels, plus scalable SVG and pixmaps compatibility paths.
+- Native x86_64 and ARM64 builds with AppImage, DEB, and RPM packages.
 
 ## Shortcuts
 
@@ -41,6 +40,7 @@ Disable desktop-environment shortcuts that already use `Alt+Tab` or `Super+Tab` 
 
 - Persistent lightweight daemon with immediate switcher display.
 - Live GPU-backed X11 window thumbnails.
+- Root-framebuffer fallback for black GPU-backed Edge/Chromium and Remmina previews.
 - Window titles, application icons, workspace names, and workspace badges.
 - MRU-aware selection and keyboard-first navigation.
 - Current-workspace filtering for `Win+Tab`.
@@ -61,16 +61,16 @@ Each release provides the following files:
 
 | Architecture | AppImage | DEB | RPM |
 |---|---|---|---|
-| x86_64 / AMD64 | `FastTab-2.0.2-x86_64.AppImage` | `fasttab_2.0.2_amd64.deb` | `fasttab-2.0.2-1.x86_64.rpm` |
-| ARM64 / AArch64 | `FastTab-2.0.2-aarch64.AppImage` | `fasttab_2.0.2_arm64.deb` | `fasttab-2.0.2-1.aarch64.rpm` |
+| x86_64 / AMD64 | `FastTab-2.0.4-x86_64.AppImage` | `fasttab_2.0.4_amd64.deb` | `fasttab-2.0.4-1.x86_64.rpm` |
+| ARM64 / AArch64 | `FastTab-2.0.4-aarch64.AppImage` | `fasttab_2.0.4_arm64.deb` | `fasttab-2.0.4-1.aarch64.rpm` |
 
 SHA-256 checksum files and AppImage zsync metadata are published alongside the packages.
 
 ### AppImage
 
 ```bash
-chmod +x FastTab-2.0.2-x86_64.AppImage
-./FastTab-2.0.2-x86_64.AppImage
+chmod +x FastTab-2.0.4-x86_64.AppImage
+./FastTab-2.0.4-x86_64.AppImage
 ```
 
 Use the `aarch64` file on ARM64 systems.
@@ -78,15 +78,15 @@ Use the `aarch64` file on ARM64 systems.
 ### Debian / Ubuntu
 
 ```bash
-sudo apt install ./fasttab_2.0.2_amd64.deb
+sudo apt install ./fasttab_2.0.4_amd64.deb
 ```
 
-Use `fasttab_2.0.2_arm64.deb` on ARM64 systems.
+Use `fasttab_2.0.4_arm64.deb` on ARM64 systems.
 
 ### Fedora / RHEL-compatible distributions
 
 ```bash
-sudo dnf install ./fasttab-2.0.2-1.x86_64.rpm
+sudo dnf install ./fasttab-2.0.4-1.x86_64.rpm
 ```
 
 Use the `aarch64` RPM on ARM64 systems.
@@ -122,7 +122,7 @@ Unknown arguments return exit status `2` and print an error to standard error.
 
 ## Build from source
 
-Install Zig 0.14.0 or later, a C toolchain, `make`, `curl`, `tar`, and the X11/OpenGL development libraries listed in the CI workflow.
+Install Zig 0.14.0 or later, Python 3, a C toolchain, `make`, `curl`, `tar`, and the X11/OpenGL development libraries listed in the CI workflow.
 
 ```bash
 git clone https://github.com/newyorkthink/fasttab.git
@@ -168,4 +168,4 @@ FastTab is distributed under the GNU General Public License version 3 (`GPL-3.0-
 
 ## Technical design
 
-FastTab runs as a background daemon, monitors X11 windows, and keeps GLX-backed thumbnails ready. The switcher UI is rendered through Raylib/OpenGL. This avoids generating screenshots only after the shortcut is pressed and keeps interaction latency low.
+FastTab runs as a background daemon, monitors X11 windows, and keeps GLX-backed thumbnails ready. Edge/Chromium and Remmina windows that expose black composite pixmaps use a normal OpenGL texture captured from the composed root framebuffer before the switcher is mapped. The switcher UI is rendered through Raylib/OpenGL.
