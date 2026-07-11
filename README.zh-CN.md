@@ -134,7 +134,7 @@ zig build -Doptimize=ReleaseSafe -Dcpu=baseline
 在当前原生架构上构建全部安装包：
 
 ```bash
-./build_packages.sh
+bash ./build_packages.sh
 ```
 
 仅构建 AppImage：
