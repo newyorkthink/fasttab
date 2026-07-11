@@ -1,16 +1,17 @@
 name: Apply FastTab 2.0.2 preview fix
 
 on:
-  pull_request:
+  push:
     branches:
-      - main
+      - agent/fix-cross-workspace-preview-2.0.2
+    paths:
+      - .github/workflows/apply-cross-workspace-preview-2.0.2.yml
 
 permissions:
   contents: write
 
 jobs:
   apply:
-    if: github.head_ref == 'agent/fix-cross-workspace-preview-2.0.2'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
