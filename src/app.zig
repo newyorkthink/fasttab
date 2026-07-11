@@ -63,8 +63,6 @@ pub const App = struct {
     show_delay_frames: ?u8,
     reacquire_pending: bool,
     reacquire_cursor: usize,
-    snapshot_pending: bool,
-    snapshot_cursor: usize,
     switch_origin_window: x11.xcb.xcb_window_t,
     switch_origin_snapshot_ready: bool,
     mru_list: std.ArrayList(x11.xcb.xcb_window_t),
@@ -152,8 +150,6 @@ pub const App = struct {
             .show_delay_frames = null,
             .reacquire_pending = false,
             .reacquire_cursor = 0,
-            .snapshot_pending = false,
-            .snapshot_cursor = 0,
             .switch_origin_window = 0,
             .switch_origin_snapshot_ready = false,
             .mru_list = mru_list,
@@ -250,9 +246,6 @@ pub const App = struct {
                     return;
                 }
             } else {
-                // Build at most one fallback snapshot per hidden frame. This keeps
-                // confirm/cancel paths immediate instead of copying every window at once.
-                self.processSnapshotQueue();
                 std.time.sleep(16 * std.time.ns_per_ms);
                 return;
             }
@@ -500,7 +493,6 @@ pub const App = struct {
 
             // Recalculate layout
             self.updateLayout();
-            if (self.window_hidden) self.scheduleSnapshotRefresh();
         }
     }
 
@@ -524,6 +516,10 @@ pub const App = struct {
 
     /// Hide the switcher window. Snapshot work is deliberately deferred so
     /// releasing Alt/Super never blocks on one FBO copy per tracked window.
+    /// Hide the switcher window. Cache valid frames, then release every
+    /// XComposite/GLX binding exactly as upstream does. Keeping those bindings
+    /// alive while hidden can leave Chromium, Firefox, and remote-desktop windows
+    /// attached to stale or recycled backing pixmaps.
     pub fn hideWindow(self: *Self) void {
         log.debug("Hiding window", .{});
         const start_ns = std.time.nanoTimestamp();
@@ -539,16 +535,23 @@ pub const App = struct {
         self.window_hidden = true;
         self.reacquire_pending = false;
         self.mouse_left_was_down = false;
-        self.scheduleSnapshotRefresh();
 
-        const total_us = @divTrunc(after_hide_ns - start_ns, std.time.ns_per_us);
+        self.cacheAllSnapshots();
+        const after_snapshot_ns = std.time.nanoTimestamp();
+
+        self.releaseAllBindings();
+        const after_release_ns = std.time.nanoTimestamp();
+
+        const total_us = @divTrunc(after_release_ns - start_ns, std.time.ns_per_us);
         if (total_us >= PROFILE_SLOW_HIDE_WINDOW_US) {
             log.debug(
-                "profile hideWindow(us): total={d} notify={d} hide={d} windows={d}",
+                "profile hideWindow(us): total={d} notify={d} hide={d} snapshot={d} release={d} windows={d}",
                 .{
                     total_us,
                     @divTrunc(after_notify_ns - start_ns, std.time.ns_per_us),
                     @divTrunc(after_hide_ns - after_notify_ns, std.time.ns_per_us),
+                    @divTrunc(after_snapshot_ns - after_hide_ns, std.time.ns_per_us),
+                    @divTrunc(after_release_ns - after_snapshot_ns, std.time.ns_per_us),
                     self.window_textures.count(),
                 },
             );
@@ -556,18 +559,16 @@ pub const App = struct {
     }
 
     /// Show the switcher window (public for socket commands)
+    /// Show the switcher window (public for socket commands)
     pub fn showWindow(self: *Self) void {
         const start_ns = std.time.nanoTimestamp();
         log.debug("Showing window with {d} items", .{self.displayItems().len});
 
-        // Notify worker that window is visible
         if (self.update_queue) |queue| {
             queue.setWindowVisible(true);
         }
         const after_notify_ns = std.time.nanoTimestamp();
 
-        // Query current mouse position and find monitor before layout.
-        // The switcher must fit the monitor it opens on, including small virtual displays.
         const mouse_pos = x11.getMousePosition(self.conn.conn, self.conn.root);
         self.monitor = findMonitorAtPosition(mouse_pos);
         const after_monitor_ns = std.time.nanoTimestamp();
@@ -575,7 +576,6 @@ pub const App = struct {
         self.refreshWorkspaceInfo();
         self.refreshItemWorkspaces();
 
-        // Recalculate layout using the current monitor bounds.
         self.current_layout = ui.calculateBestLayoutForMonitor(
             self.displayItems(),
             self.monitor.width,
@@ -587,7 +587,6 @@ pub const App = struct {
         rl.ClearWindowState(rl.FLAG_WINDOW_HIDDEN);
         const after_map_ns = std.time.nanoTimestamp();
 
-        // Set size after showing - SetWindowSize on a hidden window may not take effect
         rl.SetWindowSize(@intCast(self.current_layout.total_width), @intCast(self.current_layout.total_height));
         const after_size_ns = std.time.nanoTimestamp();
 
@@ -602,12 +601,10 @@ pub const App = struct {
         self.focus_grace_frames = 5;
         self.window_hidden = false;
         self.mouse_left_was_down = false;
-        self.snapshot_pending = false;
 
-        // Refresh mapped windows without discarding the last known snapshot.
-        // A transient GLX failure therefore keeps a usable browser preview.
-        self.refreshViewableThumbnailsForShow();
-
+        // All bindings were released while hidden. Reacquire ordinary live GLX
+        // textures progressively; cached snapshots remain visible until each
+        // window has a valid fresh binding.
         self.reacquire_pending = self.hasPendingReacquire();
         self.reacquire_cursor = if (self.items.items.len > 0) self.selected_index % self.items.items.len else 0;
 
@@ -935,20 +932,28 @@ pub const App = struct {
     }
 
     /// Handle damage events without treating a transient GLX error as window death.
+    /// Handle damage using the upstream live-pixmap lifecycle. A stale
+    /// backing pixmap is reacquired immediately while FastTab is visible; while
+    /// hidden, bindings are released and damage is only acknowledged.
     pub fn handleDamageEvent(self: *Self, drawable: x11.xcb.xcb_window_t) void {
         if (self.window_textures.getPtr(drawable)) |tex| {
             _ = x11.xcb.xcb_damage_subtract(self.conn.conn, tex.damage, 0, 0);
 
+            if (self.window_hidden) return;
+
             if (!tex.rebind(self.conn)) {
-                log.debug("GLX rebind failed for window {x}; preserving cached preview and retrying later", .{drawable});
+                log.debug("GLX rebind failed for window {x}, reacquiring pixmap", .{drawable});
                 _ = self.cacheSnapshotForWindow(drawable);
                 tex.invalidate(self.conn);
-                self.markThumbnailReady(drawable, false);
-                self.reacquire_pending = true;
-                if (self.findItemIndexByWindowId(drawable)) |index| {
-                    self.reacquire_cursor = index;
+
+                if (!tex.reacquire(self.conn)) {
+                    self.markThumbnailReady(drawable, false);
+                    self.reacquire_pending = true;
+                    if (self.findItemIndexByWindowId(drawable)) |index| {
+                        self.reacquire_cursor = index;
+                    }
+                    return;
                 }
-                return;
             }
 
             self.markThumbnailReady(drawable, true);
@@ -1022,40 +1027,52 @@ pub const App = struct {
 
     /// Refresh mapped windows in place. If GLX rejects a refresh, keep the old
     /// cached snapshot and let the progressive reacquire queue retry later.
-    fn refreshViewableThumbnailsForShow(self: *Self) void {
-        var layout_dirty = false;
+
+
+    /// Ensure one visible origin window has a valid live texture before
+    /// taking its fallback frame. This preserves cross-workspace previews without
+    /// keeping every GLX pixmap bound while FastTab is hidden.
+    /// Cache all currently valid live thumbnails before releasing their
+    /// GLX bindings. Previous snapshots are replaced only after a new copy succeeds.
+    fn cacheAllSnapshots(self: *Self) void {
+        var cached_count: usize = 0;
         for (self.items.items) |*item| {
-            if (!x11.isWindowViewable(self.conn.conn, item.id)) continue;
-
-            if (self.window_textures.getPtr(item.id)) |tex| {
-                if (tex.bound and tex.rebind(self.conn)) {
-                    item.thumbnail_texture = tex.toRaylibTexture();
-                    item.thumbnail_ready = true;
-                    if (item.source_width != tex.width or item.source_height != tex.height) {
-                        item.source_width = tex.width;
-                        item.source_height = tex.height;
-                        layout_dirty = true;
-                    }
-                    continue;
-                }
-                _ = self.cacheSnapshotForItem(item);
-                if (tex.bound) tex.invalidate(self.conn);
-            }
-
-            item.thumbnail_ready = false;
+            if (self.cacheSnapshotForItem(item)) cached_count += 1;
         }
-        if (layout_dirty) self.updateLayout();
+        if (cached_count > 0) {
+            log.debug("Cached {d} thumbnail snapshots", .{cached_count});
+        }
     }
 
     fn cacheSnapshotForWindow(self: *Self, window_id: x11.xcb.xcb_window_t) bool {
         const item = self.findItemByWindowId(window_id) orelse return false;
+
+        if (!item.thumbnail_ready) {
+            if (self.window_textures.getPtr(window_id)) |tex| {
+                if (!tex.bound and !tex.reacquire(self.conn)) return false;
+                item.thumbnail_texture = tex.toRaylibTexture();
+                item.thumbnail_ready = true;
+                item.source_width = tex.width;
+                item.source_height = tex.height;
+            } else {
+                const created = x11.createWindowTexture(self.conn, window_id) catch return false;
+                self.window_textures.put(window_id, created) catch {
+                    var to_free = created;
+                    to_free.deinit(self.conn);
+                    return false;
+                };
+                const stored = self.window_textures.getPtr(window_id) orelse return false;
+                item.thumbnail_texture = stored.toRaylibTexture();
+                item.thumbnail_ready = true;
+                item.source_width = stored.width;
+                item.source_height = stored.height;
+            }
+        }
+
         return self.cacheSnapshotForItem(item);
     }
 
-    fn scheduleSnapshotRefresh(self: *Self) void {
-        self.snapshot_cursor = 0;
-        self.snapshot_pending = self.items.items.len > 0;
-    }
+
 
     /// Copy one live thumbnail into a replacement FBO. The previous snapshot is
     /// unloaded only after the new one succeeds, so no refresh can erase fallback data.
@@ -1099,19 +1116,7 @@ pub const App = struct {
 
     /// Perform no more than one GPU snapshot copy while hidden. Cheaply skip
     /// ineligible items until one copy succeeds or the pass is complete.
-    fn processSnapshotQueue(self: *Self) void {
-        if (!self.snapshot_pending or !self.window_hidden) return;
 
-        while (self.snapshot_cursor < self.items.items.len) {
-            const index = self.snapshot_cursor;
-            self.snapshot_cursor += 1;
-            if (self.cacheSnapshotForItem(&self.items.items[index])) break;
-        }
-
-        if (self.snapshot_cursor >= self.items.items.len) {
-            self.snapshot_pending = false;
-        }
-    }
 
     const REACQUIRE_FRAME_BUDGET_NS: i128 = 10 * std.time.ns_per_ms;
 
