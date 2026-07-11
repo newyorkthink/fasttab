@@ -15,4 +15,4 @@ Keywords=window;switcher;alt-tab;win-tab;x11;i3;
 Keywords[zh_CN]=窗口;切换器;X11;i3;
 StartupNotify=false
 StartupWMClass=FastTab
-X-AppImage-Version=2.0.3
+X-AppImage-Version=2.0.4
