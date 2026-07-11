@@ -1,0 +1,159 @@
+name: Apply single-instance behavior
+
+on:
+  push:
+    branches:
+      - agent/single-instance-1.0.7
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/single-instance-1.0.7
+          fetch-depth: 0
+
+      - name: Apply source and packaging changes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path('src/main.zig')
+          text = main.read_text()
+          text = text.replace(
+              '    @cInclude("signal.h");\n    @cInclude("unistd.h");',
+              '    @cInclude("signal.h");\n    @cInclude("sys/file.h");\n    @cInclude("unistd.h");',
+              1,
+          )
+
+          start = text.index('pub fn main() !void {')
+          end = text.index('\n\nfn fastExitFromSignal', start)
+          new_main = '''pub fn main() !void {
+              installFastSignalExit();
+              var args_iter = std.process.args();
+              _ = args_iter.next(); // skip program name
+
+              while (args_iter.next()) |arg| {
+                  if (std.mem.eql(u8, arg, "daemon") or std.mem.eql(u8, arg, "--daemon")) continue;
+
+                  std.debug.print("Unknown command: {s}\\n", .{arg});
+                  std.debug.print("Usage: fasttab [daemon]\\n", .{});
+                  std.process.exit(1);
+              }
+
+              var instance_lock = (try InstanceLock.acquire()) orelse {
+                  std.debug.print("Error: an instance of FastTab is already running.\\n", .{});
+                  std.process.exit(1);
+              };
+              defer instance_lock.deinit();
+
+              return runDaemon();
+          }'''
+          text = text[:start] + new_main + text[end:]
+
+          start = text.index('fn shouldTerminateExistingFastTab(')
+          end = text.index('\n\n/// Run the daemon with XCB key grabbing', start)
+          lock_impl = '''const InstanceLock = struct {
+              file: std.fs.File,
+
+              fn acquire() !?InstanceLock {
+                  var path_buf: [64]u8 = undefined;
+                  const path = try std.fmt.bufPrint(&path_buf, "/tmp/fasttab-{d}.lock", .{c.getuid()});
+                  const file = try std.fs.createFileAbsolute(path, .{
+                      .read = true,
+                      .truncate = false,
+                      .mode = 0o600,
+                  });
+                  errdefer file.close();
+
+                  if (c.flock(file.handle, c.LOCK_EX | c.LOCK_NB) != 0) {
+                      file.close();
+                      return null;
+                  }
+
+                  try file.setEndPos(0);
+                  try file.seekTo(0);
+                  var pid_buf: [32]u8 = undefined;
+                  const pid_text = try std.fmt.bufPrint(&pid_buf, "{d}\\n", .{std.c.getpid()});
+                  try file.writeAll(pid_text);
+
+                  return .{ .file = file };
+              }
+
+              fn deinit(self: *InstanceLock) void {
+                  _ = c.flock(self.file.handle, c.LOCK_UN);
+                  self.file.close();
+              }
+          };'''
+          text = text[:start] + lock_impl + text[end:]
+
+          test_start = text.index('test "replacement ignores the current AppImage process group"')
+          test_end = text.index('\n\ntest "idle Alt+Tab routes to all windows"', test_start)
+          text = text[:test_start] + text[test_end + 2:]
+          main.write_text(text)
+
+          build = Path('build_appimage.sh')
+          text = build.read_text()
+          text = text.replace(
+              '# A previously installed FastTab daemon may still own the passive Win+Tab grab.\n# Force direct AppImage launches to replace it before starting the bundled daemon.',
+              '# Start the bundled daemon normally. A second FastTab instance exits immediately\n# instead of terminating the already-running daemon.',
+              1,
+          )
+          text = text.replace('set -- daemon --replace "$@"', 'set -- daemon "$@"')
+          build.write_text(text)
+
+          Path('VERSION').write_text('1.0.7\n')
+
+          desktop = Path('packaging/fasttab.desktop')
+          text = desktop.read_text()
+          text = text.replace('Exec=fasttab daemon --replace', 'Exec=fasttab daemon', 1)
+          text = text.replace('X-AppImage-Version=1.0.6', 'X-AppImage-Version=1.0.7', 1)
+          desktop.write_text(text)
+
+          readme = Path('README.md')
+          text = readme.read_text().replace('1.0.6', '1.0.7')
+          text = text.replace(
+              'The AppImage automatically replaces an older running FastTab daemon. Version 1.0.7 also supports launching through a symlink named `fasttab`; `--replace` no longer mistakes the current AppImage runtime wrapper for an older FastTab daemon.',
+              'FastTab uses single-instance behavior. If FastTab is already running, a later launch prints an error and exits without terminating the existing daemon.',
+              1,
+          )
+          text = text.replace(
+              '3. Run `fasttab daemon --replace &` to replace any older daemon and start the new binary.',
+              '3. Run `fasttab daemon &` to start the daemon. A second launch exits immediately if an instance is already running.',
+              1,
+          )
+          readme.write_text(text)
+
+          ci = Path('.github/workflows/ci.yml')
+          text = ci.read_text()
+          text = text.replace("grep -Fq 'Exec=fasttab daemon --replace' packaging/fasttab.desktop", "grep -Fq 'Exec=fasttab daemon' packaging/fasttab.desktop", 1)
+          text = text.replace("          grep -Fq 'fn shouldTerminateExistingFastTab' src/main.zig\n          grep -Fq 'process_group != my_process_group' src/main.zig\n", "          grep -Fq 'const InstanceLock = struct' src/main.zig\n          grep -Fq 'c.flock(file.handle, c.LOCK_EX | c.LOCK_NB)' src/main.zig\n          grep -Fq 'Error: an instance of FastTab is already running.' src/main.zig\n")
+          text = text.replace("grep -Rqs '^Exec=fasttab daemon --replace$' AppDir", "grep -Rqs '^Exec=fasttab daemon$' AppDir", 1)
+          text = text.replace("grep -Fq 'set -- daemon --replace \"$@\"' AppDir/AppRun.sh", "grep -Fq 'set -- daemon \"$@\"' AppDir/AppRun.sh", 1)
+          text = text.replace(
+              'echo "FastTab ${VERSION} fixes AppImage launches through a fasttab symlink."',
+              'echo "FastTab ${VERSION} uses simple single-instance startup behavior."',
+              1,
+          )
+          text = text.replace(
+              'echo "The --replace scan now ignores processes in the current launch process group, preventing an AppImage runtime invoked through a symlink named fasttab from killing its own wrapper."',
+              'echo "If FastTab is already running, a later launch now prints an error and exits immediately. It no longer terminates or replaces the existing daemon."',
+              1,
+          )
+          ci.write_text(text)
+
+          Path('.github/workflows/apply-single-instance-1.0.7.yml').unlink()
+          PY
+
+      - name: Commit changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/main.zig build_appimage.sh VERSION packaging/fasttab.desktop README.md .github/workflows/ci.yml .github/workflows/apply-single-instance-1.0.7.yml
+          git commit -m "Use single-instance startup behavior"
+          git push origin HEAD:agent/single-instance-1.0.7
