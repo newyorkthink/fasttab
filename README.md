@@ -24,6 +24,10 @@ FastTab 2.0.7 fixes intermittent transparent previews while retaining the generi
 - Preserve the current-window default selection, i3 workspace overview, workspace badges, mouse support, and multi-monitor layout.
 - Retain x86_64 and ARM64/AArch64 AppImage, DEB, and RPM packages.
 
+## Known issues
+
+- Firefox and Microsoft Edge previews may still occasionally appear black or fail to render, especially after repeated window switching. This is a known issue and will be addressed in a future release.
+
 ## Shortcuts
 
 - `Alt+Tab`: display all tracked windows.
