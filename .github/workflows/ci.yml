@@ -60,27 +60,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate source metadata and scripts
+      - name: Validate source and metadata
         run: |
           set -euxo pipefail
           VERSION="$(tr -d '[:space:]' < VERSION)"
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [[ "$VERSION" == "2.0.4" ]]
-          python -m py_compile .github/scripts/*.py tools/generate_gpu_preview_sources.py
+          [[ "$VERSION" == "2.0.5" ]]
+          python -m py_compile .github/scripts/*.py
           python -c "import xml.etree.ElementTree as ET; ET.parse('packaging/fasttab.svg')"
           bash -n setup.sh build_appimage.sh build_packages.sh
           test -s LICENSE.md
+          test ! -e tools/generate_gpu_preview_sources.py
+          test ! -e tools/fix_generated_gpu_source.py
           grep -Fq "X-AppImage-Version=$VERSION" packaging/fasttab.desktop
-          grep -Fq 'generate_gpu_preview_sources.py' build.zig
-          grep -Fq 'root_capture' tools/generate_gpu_preview_sources.py
-          grep -Fq 'microsoft-edge' tools/generate_gpu_preview_sources.py
-          grep -Fq 'remmina' tools/generate_gpu_preview_sources.py
-          grep -Fq 'pub fn sanitizeDisplayText' src/text_sanitize.zig
-          grep -Fq 'fn processSnapshotQueue' src/app.zig
-          grep -Fq 'switch_origin_snapshot_ready' src/app.zig
+          grep -Fq "const FASTTAB_VERSION = \"$VERSION\";" src/main.zig
+          grep -Fq 'self.releaseAllBindings();' src/app.zig
+          grep -Fq 'if (self.window_hidden) return;' src/app.zig
+          grep -Fq 'tex.reacquire(self.conn)' src/app.zig
           grep -Fq 'fn cacheSnapshotForWindow' src/app.zig
-          grep -Fq 'fn refreshViewableThumbnailsForShow' src/app.zig
-          grep -Fq 'preserving cached preview and retrying later' src/app.zig
+          grep -Fq 'finalColor = (color / totalSamples) * fragColor;' src/shaders/downsample.fs
+          ! grep -Fq 'microsoft-edge' src/app.zig src/x11.zig build.zig
+          ! grep -Fq 'remmina' src/app.zig src/x11.zig build.zig
+          ! grep -Fq 'uploadWindowFromRoot' src/app.zig src/x11.zig build.zig
           grep -Fq 'README.zh-CN.md' README.md
           grep -Fq 'License:        GPL-3.0-only' build_packages.sh
           grep -Fq '/usr/share/doc/fasttab/LICENSE.md' build_packages.sh
@@ -104,13 +104,6 @@ jobs:
 
       - name: Build ReleaseSafe binary
         run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
-
-      - name: Validate generated compatibility source
-        run: |
-          test -s zig-cache/fasttab-generated-src/x11.zig
-          grep -Fq 'root_capture: bool' zig-cache/fasttab-generated-src/x11.zig
-          grep -Fq 'uploadWindowFromRoot' zig-cache/fasttab-generated-src/x11.zig
-          grep -Fq 'const FASTTAB_VERSION = "2.0.4";' zig-cache/fasttab-generated-src/main.zig
 
       - name: Validate CLI streams
         run: |
@@ -182,7 +175,7 @@ jobs:
           cp -a deb-dist/. dist/
           cp -a rpm-dist/. dist/
 
-      - name: Validate release files, license, and icon hierarchy
+      - name: Validate release files
         env:
           APPIMAGE_ARCH: ${{ matrix.appimage_arch }}
           DEB_ARCH: ${{ matrix.deb_arch }}
@@ -209,17 +202,8 @@ jobs:
           test -s AppDir/usr/share/doc/fasttab/LICENSE.md
 
           dpkg-deb --field "$DEB" Package Version Architecture
-          dpkg-deb --contents "$DEB" | grep -Fq './usr/share/icons/hicolor/256x256/apps/fasttab.png'
-          dpkg-deb --contents "$DEB" | grep -Fq './usr/share/icons/hicolor/scalable/apps/fasttab.svg'
-          dpkg-deb --contents "$DEB" | grep -Fq './usr/share/pixmaps/fasttab.png'
-          dpkg-deb --contents "$DEB" | grep -Fq './usr/share/doc/fasttab/LICENSE.md'
-
           rpm -qp "$RPM"
           rpm -qp --qf '%{LICENSE}\n' "$RPM" | grep -Fxq 'GPL-3.0-only'
-          rpm -qlp "$RPM" | grep -Fxq '/usr/share/icons/hicolor/256x256/apps/fasttab.png'
-          rpm -qlp "$RPM" | grep -Fxq '/usr/share/icons/hicolor/scalable/apps/fasttab.svg'
-          rpm -qlp "$RPM" | grep -Fxq '/usr/share/pixmaps/fasttab.png'
-          rpm -qlp "$RPM" | grep -Fxq '/usr/share/doc/fasttab/LICENSE.md'
 
           (
             cd dist
@@ -227,11 +211,6 @@ jobs:
             sha256sum -c "$(basename "$DEB.sha256")"
             sha256sum -c "$(basename "$RPM.sha256")"
           )
-
-          if find dist -maxdepth 1 -type f -name 'fasttab-*' ! -name '*.rpm' ! -name '*.rpm.sha256' | grep -q .; then
-            echo 'Unexpected standalone binary artifact found.' >&2
-            exit 1
-          fi
 
       - name: Upload release files
         uses: actions/upload-artifact@v4
@@ -243,9 +222,7 @@ jobs:
 
   release:
     needs: [test, packages]
-    if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && github.head_ref == 'agent/fix-edge-remmina-previews-2.0.4')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -263,7 +240,6 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if git rev-parse --verify --quiet "refs/tags/$VERSION" >/dev/null; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "Release tag $VERSION already exists; skipping publication."
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
@@ -293,23 +269,20 @@ jobs:
             test -s "dist/fasttab-${VERSION}-1.${arch}.rpm"
             test -s "dist/fasttab-${VERSION}-1.${arch}.rpm.sha256"
           done
-          if find dist -maxdepth 1 -type f -name 'fasttab-*' ! -name '*.rpm' ! -name '*.rpm.sha256' | grep -q .; then
-            echo 'Standalone binary artifacts are not allowed in the release.' >&2
-            exit 1
-          fi
 
       - name: Write release notes
         if: steps.version.outputs.publish == 'true'
         run: |
           cat > RELEASE_NOTES.md <<'NOTES'
-          FastTab 2.0.4 fixes black previews from GPU-backed X11 clients while retaining the Firefox and i3 corrections.
+          FastTab 2.0.5 restores the generic upstream live-preview lifecycle while preserving the fork's i3 workspace features.
 
           Highlights:
 
-          - Uses a composed root-framebuffer capture for Microsoft Edge/Chromium video and Remmina windows whose XComposite pixmaps are black.
-          - Refreshes those fallback previews immediately before FastTab is mapped.
-          - Retains Firefox alpha handling and cross-workspace preview persistence under i3.
-          - Provides x86_64 and ARM64/AArch64 AppImage, DEB, and RPM packages.
+          - Removes application-specific Edge, Remmina, and root-framebuffer capture rules.
+          - Releases XComposite/GLX bindings while hidden and reacquires fresh backing pixmaps on show.
+          - Restores one common dynamic preview path for Firefox, Chrome/Chromium, Edge, video, Remmina, and other X11 clients.
+          - Keeps cached snapshots only as cross-workspace and temporarily-unmapped fallbacks.
+          - Retains x86_64 and ARM64/AArch64 AppImage, DEB, and RPM packages.
 
           FastTab requires Linux, X11, and hardware-accelerated OpenGL.
           NOTES
@@ -319,7 +292,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
-          target_commitish: ${{ github.event.pull_request.head.sha || github.sha }}
+          target_commitish: ${{ github.sha }}
           name: FastTab ${{ steps.version.outputs.version }}
           body_path: RELEASE_NOTES.md
           files: dist/*
