@@ -1,4 +1,4 @@
-name: Apply FastTab 2.0.4 GPU black-preview fix
+name: Diagnose and apply FastTab 2.0.4 GPU black-preview fix
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   apply:
-    if: github.event.head_commit.message != 'Fix GPU-backed black previews'
+    if: github.event.head_commit.message != 'Fix GPU-backed black previews' && github.event.head_commit.message != 'Record GPU fix diagnostic'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -17,7 +17,7 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Restore CI and apply source patch
+      - name: Apply source patch or record diagnostic
         run: |
           git show a8980c58d60928c6ca19a668aca02dbe9572c12d:.github/workflows/ci.yml > .github/workflows/ci.yml
           python - <<'PY'
@@ -38,15 +38,28 @@ jobs:
               raise SystemExit('replace_once compatibility patch not found')
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
-          python .github/scripts/apply_gpu_black_preview_fix_2_0_4.py
-          rm -f .github/scripts/apply_gpu_black_preview_fix_2_0_4.py
-          rm -f .github/trigger-gpu-black-preview-fix
 
-      - name: Commit generated fix
-        run: |
-          git diff --check
+          set +e
+          python .github/scripts/apply_gpu_black_preview_fix_2_0_4.py > /tmp/gpu-fix.log 2>&1
+          status=$?
+          set -e
+
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+
+          if [ "$status" -ne 0 ]; then
+            git reset --hard HEAD
+            cp /tmp/gpu-fix.log .github/gpu-fix-diagnostic.txt
+            git add .github/gpu-fix-diagnostic.txt
+            git commit -m 'Record GPU fix diagnostic'
+            git push origin HEAD:main
+            exit 0
+          fi
+
+          rm -f .github/scripts/apply_gpu_black_preview_fix_2_0_4.py
+          rm -f .github/trigger-gpu-black-preview-fix
+          rm -f .github/gpu-fix-diagnostic.txt
+          git diff --check
           git add -A
           git commit -m 'Fix GPU-backed black previews'
           git push origin HEAD:main
