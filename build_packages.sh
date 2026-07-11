@@ -227,7 +227,7 @@ cp -a "$PACKAGE_ROOT"/. %{buildroot}/
 
 %changelog
 * Sat Jul 11 2026 newyorkthink - $VERSION-1
-- FastTab 2.0.0 formal multi-architecture release
+- FastTab 2.0.1 preview persistence and latency fixes
 SPEC
 
   rpmbuild --define "_topdir $RPM_TOP" --target "$RPM_ARCH" -bb "$spec"

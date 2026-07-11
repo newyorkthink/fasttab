@@ -297,3 +297,26 @@ test "grid layout with 50 items" {
     try testing.expect(grid.total_width <= ui.MAX_GRID_WIDTH);
     try testing.expect(grid.total_height <= ui.MAX_GRID_HEIGHT);
 }
+
+
+// --- display text sanitization tests ---
+
+test "sanitizeDisplayText replaces Nerd Font private-use glyphs" {
+    var output: [128]u8 = undefined;
+    const input = "user \xEE\x82\xA0 alacritty_default \xEF\x84\xA0 1 zsh_1";
+    const sanitized = ui.sanitizeDisplayText(input, &output);
+    try testing.expectEqualStrings("user | alacritty_default | 1 zsh_1", sanitized);
+}
+
+test "sanitizeDisplayText preserves Chinese and ordinary UTF-8" {
+    var output: [128]u8 = undefined;
+    const sanitized = ui.sanitizeDisplayText("终端 - alacritty", &output);
+    try testing.expectEqualStrings("终端 - alacritty", sanitized);
+}
+
+test "sanitizeDisplayText collapses invalid and supplementary glyph runs" {
+    var output: [128]u8 = undefined;
+    const input = "title \xFF\xFE 😀😀 end";
+    const sanitized = ui.sanitizeDisplayText(input, &output);
+    try testing.expectEqualStrings("title | | end", sanitized);
+}

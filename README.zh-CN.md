@@ -10,10 +10,13 @@
 
 FastTab 是一款面向 X11 的高性能窗口切换器，使用 Zig、Raylib 和 OpenGL 编写，支持 `Alt+Tab` 与 `Win+Tab`。
 
-## FastTab 2.0.0
+## FastTab 2.0.1
 
-FastTab 2.0.0 是首个正式多架构版本，主要包括：
+FastTab 2.0.1 是稳定性修复版本，主要包括：
 
+- 修复 Firefox、Vivaldi 等浏览器预览在多次切换后退化为应用图标的问题。
+- 退出切换器后按帧生成缓存预览，不再同步处理全部窗口，从而消除松开 `Alt/Win` 时的卡顿。
+- Nerd Font、Powerline 等私有区标题符号会转换为普通分隔符，不再显示为 `?`。
 - `Alt+Tab` 显示全部窗口，`Win+Tab` 仅显示当前工作区窗口。
 - 完整修复 `Win+Shift+Tab`，同时兼容普通 `Tab` 和部分键盘布局使用的独立 `ISO_Left_Tab` 键码。
 - `help` 和 `version` 输出到标准输出，错误信息继续输出到标准错误。
@@ -58,16 +61,16 @@ FastTab 2.0.0 是首个正式多架构版本，主要包括：
 
 | 架构 | AppImage | DEB | RPM |
 |---|---|---|---|
-| x86_64 / AMD64 | `FastTab-2.0.0-x86_64.AppImage` | `fasttab_2.0.0_amd64.deb` | `fasttab-2.0.0-1.x86_64.rpm` |
-| ARM64 / AArch64 | `FastTab-2.0.0-aarch64.AppImage` | `fasttab_2.0.0_arm64.deb` | `fasttab-2.0.0-1.aarch64.rpm` |
+| x86_64 / AMD64 | `FastTab-2.0.1-x86_64.AppImage` | `fasttab_2.0.1_amd64.deb` | `fasttab-2.0.1-1.x86_64.rpm` |
+| ARM64 / AArch64 | `FastTab-2.0.1-aarch64.AppImage` | `fasttab_2.0.1_arm64.deb` | `fasttab-2.0.1-1.aarch64.rpm` |
 
 发布页面同时提供 SHA-256 校验文件和 AppImage zsync 更新元数据。
 
 ### AppImage
 
 ```bash
-chmod +x FastTab-2.0.0-x86_64.AppImage
-./FastTab-2.0.0-x86_64.AppImage
+chmod +x FastTab-2.0.1-x86_64.AppImage
+./FastTab-2.0.1-x86_64.AppImage
 ```
 
 ARM64 设备请使用文件名中包含 `aarch64` 的版本。
@@ -75,15 +78,15 @@ ARM64 设备请使用文件名中包含 `aarch64` 的版本。
 ### Debian / Ubuntu
 
 ```bash
-sudo apt install ./fasttab_2.0.0_amd64.deb
+sudo apt install ./fasttab_2.0.1_amd64.deb
 ```
 
-ARM64 设备请安装 `fasttab_2.0.0_arm64.deb`。
+ARM64 设备请安装 `fasttab_2.0.1_arm64.deb`。
 
 ### Fedora / RHEL 系列
 
 ```bash
-sudo dnf install ./fasttab-2.0.0-1.x86_64.rpm
+sudo dnf install ./fasttab-2.0.1-1.x86_64.rpm
 ```
 
 ARM64 设备请安装文件名中包含 `aarch64` 的 RPM 包。

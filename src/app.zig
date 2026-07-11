@@ -63,6 +63,8 @@ pub const App = struct {
     show_delay_frames: ?u8,
     reacquire_pending: bool,
     reacquire_cursor: usize,
+    snapshot_pending: bool,
+    snapshot_cursor: usize,
     mru_list: std.ArrayList(x11.xcb.xcb_window_t),
     workspace_names: std.ArrayList([]u8),
     current_workspace: ?u32,
@@ -148,6 +150,8 @@ pub const App = struct {
             .show_delay_frames = null,
             .reacquire_pending = false,
             .reacquire_cursor = 0,
+            .snapshot_pending = false,
+            .snapshot_cursor = 0,
             .mru_list = mru_list,
             .workspace_names = workspace_names,
             .current_workspace = null,
@@ -242,7 +246,9 @@ pub const App = struct {
                     return;
                 }
             } else {
-                // No show pending, sleep
+                // Build at most one fallback snapshot per hidden frame. This keeps
+                // confirm/cancel paths immediate instead of copying every window at once.
+                self.processSnapshotQueue();
                 std.time.sleep(16 * std.time.ns_per_ms);
                 return;
             }
@@ -490,6 +496,7 @@ pub const App = struct {
 
             // Recalculate layout
             self.updateLayout();
+            if (self.window_hidden) self.scheduleSnapshotRefresh();
         }
     }
 
@@ -511,12 +518,12 @@ pub const App = struct {
         }
     }
 
-    /// Hide the switcher window
+    /// Hide the switcher window. Snapshot work is deliberately deferred so
+    /// releasing Alt/Super never blocks on one FBO copy per tracked window.
     pub fn hideWindow(self: *Self) void {
         log.debug("Hiding window", .{});
         const start_ns = std.time.nanoTimestamp();
 
-        // Notify worker that window is hidden
         if (self.update_queue) |queue| {
             queue.setWindowVisible(false);
         }
@@ -528,35 +535,16 @@ pub const App = struct {
         self.window_hidden = true;
         self.reacquire_pending = false;
         self.mouse_left_was_down = false;
+        self.scheduleSnapshotRefresh();
 
-        // i3: keep GLX pixmap bindings alive, otherwise other workspace thumbnails fall back to icons.
-        self.cacheAllSnapshots();
-
-        const after_snapshot_ns = std.time.nanoTimestamp();
-        const after_release_ns = after_snapshot_ns;
-
-        const total_us = @divTrunc(after_release_ns - start_ns, std.time.ns_per_us);
+        const total_us = @divTrunc(after_hide_ns - start_ns, std.time.ns_per_us);
         if (total_us >= PROFILE_SLOW_HIDE_WINDOW_US) {
             log.debug(
-                "profile hideWindow(us): total={d} notify={d} hide={d} snapshot={d} release={d} windows={d}",
+                "profile hideWindow(us): total={d} notify={d} hide={d} windows={d}",
                 .{
                     total_us,
                     @divTrunc(after_notify_ns - start_ns, std.time.ns_per_us),
                     @divTrunc(after_hide_ns - after_notify_ns, std.time.ns_per_us),
-                    @divTrunc(after_snapshot_ns - after_hide_ns, std.time.ns_per_us),
-                    @divTrunc(after_release_ns - after_snapshot_ns, std.time.ns_per_us),
-                    self.window_textures.count(),
-                },
-            );
-        } else {
-            log.debug(
-                "hideWindow(us): total={d} notify={d} hide={d} snapshot={d} release={d} windows={d}",
-                .{
-                    total_us,
-                    @divTrunc(after_notify_ns - start_ns, std.time.ns_per_us),
-                    @divTrunc(after_hide_ns - after_notify_ns, std.time.ns_per_us),
-                    @divTrunc(after_snapshot_ns - after_hide_ns, std.time.ns_per_us),
-                    @divTrunc(after_release_ns - after_snapshot_ns, std.time.ns_per_us),
                     self.window_textures.count(),
                 },
             );
@@ -610,10 +598,11 @@ pub const App = struct {
         self.focus_grace_frames = 5;
         self.window_hidden = false;
         self.mouse_left_was_down = false;
+        self.snapshot_pending = false;
 
-        // Force a fresh composite pixmap for mapped windows every time the switcher opens.
-        // This prevents stale previews after an app changes content while FastTab is hidden.
-        self.forceRefreshViewableThumbnailsForShow();
+        // Refresh mapped windows without discarding the last known snapshot.
+        // A transient GLX failure therefore keeps a usable browser preview.
+        self.refreshViewableThumbnailsForShow();
 
         self.reacquire_pending = self.hasPendingReacquire();
         self.reacquire_cursor = if (self.items.items.len > 0) self.selected_index % self.items.items.len else 0;
@@ -927,44 +916,31 @@ pub const App = struct {
         );
     }
 
-    /// Handle damage event for a window (rebind GLX texture)
+    /// Handle damage events without treating a transient GLX error as window death.
     pub fn handleDamageEvent(self: *Self, drawable: x11.xcb.xcb_window_t) void {
         if (self.window_textures.getPtr(drawable)) |tex| {
-            // Always acknowledge the damage to prevent event queue buildup
             _ = x11.xcb.xcb_damage_subtract(self.conn.conn, tex.damage, 0, 0);
 
-            // i3 fork: bindings stay alive, so keep updating thumbnails while switcher is hidden.
-
             if (!tex.rebind(self.conn)) {
-                // Rebind failed — pixmap is stale, try to reacquire a fresh one
-                log.debug("GLX rebind failed for window {x}, reacquiring pixmap", .{drawable});
+                log.debug("GLX rebind failed for window {x}; preserving cached preview and retrying later", .{drawable});
                 tex.invalidate(self.conn);
-                if (!tex.reacquire(self.conn)) {
-                    // Window is truly gone — destroy texture and remove from items
-                    log.debug("Reacquire also failed for window {x}, removing", .{drawable});
-                    var t = self.window_textures.fetchRemove(drawable) orelse return;
-                    t.value.deinit(self.conn);
-                    self.removeItemByWindowId(drawable);
-                    if (self.update_queue) |q| q.reportDropped(drawable);
-                    self.reacquire_pending = self.hasPendingReacquire();
-                    self.reacquire_cursor = if (self.items.items.len > 0) self.reacquire_cursor % self.items.items.len else 0;
-                    self.updateLayout();
-                    return;
-                }
-                self.markThumbnailReady(drawable, true);
-                if (self.findItemByWindowId(drawable)) |item| {
-                    item.thumbnail_texture = tex.toRaylibTexture();
-                    // Update dimensions in case the window was resized
-                    if (item.source_width != tex.width or item.source_height != tex.height) {
-                        item.source_width = tex.width;
-                        item.source_height = tex.height;
-                        self.updateLayout();
-                    }
+                self.markThumbnailReady(drawable, false);
+                self.reacquire_pending = true;
+                if (self.findItemIndexByWindowId(drawable)) |index| {
+                    self.reacquire_cursor = index;
                 }
                 return;
             }
 
             self.markThumbnailReady(drawable, true);
+            if (self.findItemByWindowId(drawable)) |item| {
+                item.thumbnail_texture = tex.toRaylibTexture();
+                if (item.source_width != tex.width or item.source_height != tex.height) {
+                    item.source_width = tex.width;
+                    item.source_height = tex.height;
+                    self.updateLayout();
+                }
+            }
         }
     }
 
@@ -1025,84 +1001,99 @@ pub const App = struct {
         log.debug("Released {d} GLX bindings", .{self.window_textures.count()});
     }
 
-    /// Mark currently viewable windows stale so the next frame reacquires fresh composite pixmaps.
-    /// Unmapped/i3 other-workspace windows are left alone so their old fallback preview is preserved.
-    fn forceRefreshViewableThumbnailsForShow(self: *Self) void {
+    /// Refresh mapped windows in place. If GLX rejects a refresh, keep the old
+    /// cached snapshot and let the progressive reacquire queue retry later.
+    fn refreshViewableThumbnailsForShow(self: *Self) void {
+        var layout_dirty = false;
         for (self.items.items) |*item| {
             if (!x11.isWindowViewable(self.conn.conn, item.id)) continue;
 
-            if (item.cached_snapshot) |snapshot| {
-                rl.UnloadRenderTexture(snapshot);
-                item.cached_snapshot = null;
+            if (self.window_textures.getPtr(item.id)) |tex| {
+                if (tex.bound and tex.rebind(self.conn)) {
+                    item.thumbnail_texture = tex.toRaylibTexture();
+                    item.thumbnail_ready = true;
+                    if (item.source_width != tex.width or item.source_height != tex.height) {
+                        item.source_width = tex.width;
+                        item.source_height = tex.height;
+                        layout_dirty = true;
+                    }
+                    continue;
+                }
+                if (tex.bound) tex.invalidate(self.conn);
             }
 
             item.thumbnail_ready = false;
-            if (self.window_textures.getPtr(item.id)) |tex| {
-                tex.release(self.conn);
-            }
         }
+        if (layout_dirty) self.updateLayout();
     }
 
-    /// Cache snapshots of all live thumbnails into RenderTextures before releasing GLX bindings.
-    /// Uses the downsample shader to render each live GLX texture into a per-window FBO at display size.
-    fn cacheAllSnapshots(self: *Self) void {
-        var cached_count: usize = 0;
-        for (self.items.items) |*item| {
-            if (!item.thumbnail_ready) continue;
-            if (item.display_width == 0 or item.display_height == 0) continue;
+    fn scheduleSnapshotRefresh(self: *Self) void {
+        self.snapshot_cursor = 0;
+        self.snapshot_pending = self.items.items.len > 0;
+    }
 
-            // Free any previous cached snapshot
-            if (item.cached_snapshot) |prev| {
-                rl.UnloadRenderTexture(prev);
-                item.cached_snapshot = null;
-            }
+    /// Copy one live thumbnail into a replacement FBO. The previous snapshot is
+    /// unloaded only after the new one succeeds, so no refresh can erase fallback data.
+    fn cacheSnapshotForItem(self: *Self, item: *ui.DisplayWindow) bool {
+        if (!item.thumbnail_ready or item.thumbnail_texture.id == 0) return false;
+        if (item.display_width == 0 or item.display_height == 0) return false;
 
-            const rt = rl.LoadRenderTexture(@intCast(item.display_width), @intCast(item.display_height));
-            if (rt.id == 0) continue; // FBO creation failed
+        const rt = rl.LoadRenderTexture(@intCast(item.display_width), @intCast(item.display_height));
+        if (rt.id == 0) return false;
 
-            const source_rect = rl.Rectangle{
-                .x = 0,
-                .y = 0,
-                .width = @floatFromInt(item.thumbnail_texture.width),
-                .height = @floatFromInt(item.thumbnail_texture.height),
-            };
-            const dest_rect = rl.Rectangle{
-                .x = 0,
-                .y = 0,
-                .width = @floatFromInt(item.display_width),
-                .height = @floatFromInt(item.display_height),
-            };
+        const source_rect = rl.Rectangle{
+            .x = 0,
+            .y = 0,
+            .width = @floatFromInt(item.thumbnail_texture.width),
+            .height = @floatFromInt(item.thumbnail_texture.height),
+        };
+        const dest_rect = rl.Rectangle{
+            .x = 0,
+            .y = 0,
+            .width = @floatFromInt(item.display_width),
+            .height = @floatFromInt(item.display_height),
+        };
 
-            rl.BeginTextureMode(rt);
-            rl.ClearBackground(rl.Color{ .r = 0, .g = 0, .b = 0, .a = 0 });
-
-            if (self.downsample_shader) |*shader| {
-                shader.begin(source_rect.width, source_rect.height, dest_rect.width, dest_rect.height);
-                rl.DrawTexturePro(item.thumbnail_texture, source_rect, dest_rect, rl.Vector2{ .x = 0, .y = 0 }, 0, rl.WHITE);
-                shader.end();
-            } else {
-                rl.DrawTexturePro(item.thumbnail_texture, source_rect, dest_rect, rl.Vector2{ .x = 0, .y = 0 }, 0, rl.WHITE);
-            }
-
-            rl.EndTextureMode();
-
-            item.cached_snapshot = rt;
-            cached_count += 1;
+        rl.BeginTextureMode(rt);
+        rl.ClearBackground(rl.Color{ .r = 0, .g = 0, .b = 0, .a = 0 });
+        if (self.downsample_shader) |*shader| {
+            shader.begin(source_rect.width, source_rect.height, dest_rect.width, dest_rect.height);
+            rl.DrawTexturePro(item.thumbnail_texture, source_rect, dest_rect, rl.Vector2{ .x = 0, .y = 0 }, 0, rl.WHITE);
+            shader.end();
+        } else {
+            rl.DrawTexturePro(item.thumbnail_texture, source_rect, dest_rect, rl.Vector2{ .x = 0, .y = 0 }, 0, rl.WHITE);
         }
-        if (cached_count > 0) {
-            log.debug("Cached {d} thumbnail snapshots", .{cached_count});
+        rl.EndTextureMode();
+
+        if (item.cached_snapshot) |previous| {
+            rl.UnloadRenderTexture(previous);
+        }
+        item.cached_snapshot = rt;
+        return true;
+    }
+
+    /// Perform no more than one GPU snapshot copy while hidden. Cheaply skip
+    /// ineligible items until one copy succeeds or the pass is complete.
+    fn processSnapshotQueue(self: *Self) void {
+        if (!self.snapshot_pending or !self.window_hidden) return;
+
+        while (self.snapshot_cursor < self.items.items.len) {
+            const index = self.snapshot_cursor;
+            self.snapshot_cursor += 1;
+            if (self.cacheSnapshotForItem(&self.items.items[index])) break;
+        }
+
+        if (self.snapshot_cursor >= self.items.items.len) {
+            self.snapshot_pending = false;
         }
     }
 
     const REACQUIRE_FRAME_BUDGET_NS: i128 = 10 * std.time.ns_per_ms;
 
     /// Incrementally reacquire GLX textures during update() to avoid blocking showWindow.
+    /// Each pending window is attempted at most once per frame; failures remain tracked.
     fn processReacquireQueue(self: *Self) void {
-        if (!self.reacquire_pending) return;
-        if (self.window_hidden) {
-            self.reacquire_pending = false;
-            return;
-        }
+        if (!self.reacquire_pending or self.window_hidden) return;
 
         const start_ns = std.time.nanoTimestamp();
         var layout_dirty = false;
@@ -1110,25 +1101,18 @@ pub const App = struct {
         var failed_count: usize = 0;
         var max_window_us: i128 = 0;
         var max_window_id: x11.xcb.xcb_window_t = 0;
-        var to_remove = std.ArrayList(x11.xcb.xcb_window_t).init(self.allocator);
-        defer to_remove.deinit();
+        var attempts_remaining = self.items.items.len;
+        var prefer_selected = true;
 
-        while (std.time.nanoTimestamp() - start_ns < REACQUIRE_FRAME_BUDGET_NS) {
-            const target_id = self.nextPendingReacquireWindowId() orelse break;
+        while (attempts_remaining > 0 and std.time.nanoTimestamp() - start_ns < REACQUIRE_FRAME_BUDGET_NS) {
+            const target_id = self.nextPendingReacquireWindowId(prefer_selected) orelse break;
+            prefer_selected = false;
+            attempts_remaining -= 1;
             const window_start_ns = std.time.nanoTimestamp();
 
             if (self.window_textures.getPtr(target_id)) |tex| {
                 if (!tex.reacquire(self.conn)) {
-                    // Minimized/unmapped windows cannot always produce a composite pixmap.
-                    // Keep them tracked and let the UI fall back to icon/cached preview.
-                    if (!x11.isWindowViewable(self.conn.conn, target_id)) {
-                        self.markThumbnailReady(target_id, false);
-                        failed_count += 1;
-                        continue;
-                    }
-
-                    to_remove.append(target_id) catch continue;
-                    self.markThumbnailReady(target_id, true);
+                    self.markThumbnailReady(target_id, false);
                     failed_count += 1;
                     continue;
                 }
@@ -1148,8 +1132,6 @@ pub const App = struct {
                 self.markThumbnailReady(target_id, true);
                 if (self.findItemByWindowId(target_id)) |item| {
                     item.thumbnail_texture = tex.toRaylibTexture();
-                    // Keep cached_snapshot for i3 cross-workspace fallback.
-                    // Live texture is used when available; cached_snapshot remains as backup.
                     if (item.source_width != new_w or item.source_height != new_h) {
                         item.source_width = new_w;
                         item.source_height = new_h;
@@ -1157,16 +1139,15 @@ pub const App = struct {
                     }
                 }
             } else {
-                // No texture yet (minimized or initial creation failed) — try to create one
                 const win_tex = x11.createWindowTexture(self.conn, target_id) catch {
+                    self.markThumbnailReady(target_id, false);
                     failed_count += 1;
-                    // Leave thumbnail_ready = false; will retry on next show
                     continue;
                 };
 
                 self.window_textures.put(target_id, win_tex) catch {
-                    var t = win_tex;
-                    t.deinit(self.conn);
+                    var texture_to_free = win_tex;
+                    texture_to_free.deinit(self.conn);
                     failed_count += 1;
                     continue;
                 };
@@ -1183,7 +1164,6 @@ pub const App = struct {
 
                 self.markThumbnailReady(target_id, true);
                 if (self.findItemByWindowId(target_id)) |item| {
-                    // Update from the now-stored texture pointer
                     if (self.window_textures.getPtr(target_id)) |stored_tex| {
                         item.thumbnail_texture = stored_tex.toRaylibTexture();
                     }
@@ -1196,25 +1176,10 @@ pub const App = struct {
             }
         }
 
-        for (to_remove.items) |wid| {
-            log.debug("Removing stale GLX texture for window {x} during progressive reacquire", .{wid});
-            if (self.window_textures.fetchRemove(wid)) |entry| {
-                var t = entry.value;
-                t.deinit(self.conn);
-            }
-            self.removeItemByWindowId(wid);
-            if (self.update_queue) |q| q.reportDropped(wid);
-            layout_dirty = true;
-        }
-
-        if (layout_dirty) {
-            self.updateLayout();
-        }
-
+        if (layout_dirty) self.updateLayout();
         self.reacquire_pending = self.hasPendingReacquire();
 
         const frame_us = @divTrunc(std.time.nanoTimestamp() - start_ns, std.time.ns_per_us);
-        // i3: disabled noisy per-frame reacquire profiling logs.
         if (false and (frame_us >= PROFILE_SLOW_REACQUIRE_FRAME_US or failed_count > 0)) {
             log.debug(
                 "profile reacquire frame(us): total={d} reacquired={d} failed={d} max_window={d} max_window_id={x} pending={}",
@@ -1239,17 +1204,20 @@ pub const App = struct {
         return false;
     }
 
-    fn nextPendingReacquireWindowId(self: *Self) ?x11.xcb.xcb_window_t {
+    fn nextPendingReacquireWindowId(self: *Self, prefer_selected: bool) ?x11.xcb.xcb_window_t {
         if (self.items.items.len == 0) return null;
 
-        if (self.selected_index < self.items.items.len) {
-            const selected = self.items.items[self.selected_index];
+        if (prefer_selected and self.selected_index < self.items.items.len) {
+            const index = self.selected_index;
+            const selected = self.items.items[index];
             if (!selected.thumbnail_ready) {
                 if (self.window_textures.getPtr(selected.id)) |tex| {
                     if (!tex.bound) {
+                        self.reacquire_cursor = (index + 1) % self.items.items.len;
                         return selected.id;
                     }
                 } else {
+                    self.reacquire_cursor = (index + 1) % self.items.items.len;
                     return selected.id;
                 }
             }
@@ -1258,17 +1226,17 @@ pub const App = struct {
         const start = self.reacquire_cursor % self.items.items.len;
         var offset: usize = 0;
         while (offset < self.items.items.len) : (offset += 1) {
-            const idx = (start + offset) % self.items.items.len;
-            const item = self.items.items[idx];
+            const index = (start + offset) % self.items.items.len;
+            const item = self.items.items[index];
             if (item.thumbnail_ready) continue;
 
             if (self.window_textures.getPtr(item.id)) |tex| {
                 if (!tex.bound) {
-                    self.reacquire_cursor = (idx + 1) % self.items.items.len;
+                    self.reacquire_cursor = (index + 1) % self.items.items.len;
                     return item.id;
                 }
             } else {
-                self.reacquire_cursor = (idx + 1) % self.items.items.len;
+                self.reacquire_cursor = (index + 1) % self.items.items.len;
                 return item.id;
             }
         }

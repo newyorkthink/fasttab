@@ -2,6 +2,7 @@ const std = @import("std");
 const thumbnail = @import("thumbnail.zig");
 const x11 = @import("x11.zig");
 const layout_module = @import("layout.zig");
+const text_sanitize = @import("text_sanitize.zig");
 
 pub const rl = @cImport({
     @cInclude("raylib.h");
@@ -15,6 +16,7 @@ pub const MAX_GRID_WIDTH = layout_module.MAX_GRID_WIDTH;
 pub const MAX_GRID_HEIGHT = layout_module.MAX_GRID_HEIGHT;
 pub const TITLE_FONT_SIZE = layout_module.TITLE_FONT_SIZE;
 pub const TITLE_SPACING = layout_module.TITLE_SPACING;
+pub const sanitizeDisplayText = text_sanitize.sanitizeDisplayText;
 
 // UI-only constants
 pub const SELECTION_BORDER: u32 = 3;
@@ -363,6 +365,16 @@ pub fn loadSystemFont(size: i32) rl.Font {
         .{ 0x0020, 0x007E }, // Basic Latin
         .{ 0x00A0, 0x00FF }, // Latin-1 Supplement
         .{ 0x0100, 0x017F }, // Latin Extended-A
+        .{ 0x0180, 0x024F }, // Latin Extended-B
+        .{ 0x0370, 0x03FF }, // Greek and Coptic
+        .{ 0x0400, 0x052F }, // Cyrillic
+        .{ 0x2100, 0x214F }, // Letterlike Symbols
+        .{ 0x2190, 0x21FF }, // Arrows
+        .{ 0x2200, 0x22FF }, // Mathematical Operators
+        .{ 0x2500, 0x257F }, // Box Drawing
+        .{ 0x25A0, 0x25FF }, // Geometric Shapes
+        .{ 0x2600, 0x26FF }, // Miscellaneous Symbols
+        .{ 0x2700, 0x27BF }, // Dingbats
         .{ 0x2000, 0x206F }, // General Punctuation
         .{ 0x3000, 0x303F }, // CJK Symbols and Punctuation
         .{ 0x4E00, 0x9FFF }, // CJK Unified Ideographs
@@ -472,8 +484,8 @@ fn drawTruncatedTextWithWeight(font: rl.Font, text: []const u8, x: f32, y: f32, 
     var text_buf: [256]u8 = undefined;
     const ellipsis = "...";
 
-    const len = utf8PrefixLen(text, text_buf.len - 1);
-    @memcpy(text_buf[0..len], text[0..len]);
+    const sanitized = text_sanitize.sanitizeDisplayText(text, text_buf[0 .. text_buf.len - 1]);
+    const len = sanitized.len;
     text_buf[len] = 0;
 
     const text_ptr: [*c]const u8 = &text_buf;
@@ -538,8 +550,8 @@ pub fn addWorkspaceBarToLayout(layout: *GridLayout, workspace_names: []const []c
 
 fn measureUiText(font: rl.Font, text: []const u8, font_size: f32) rl.Vector2 {
     var text_buf: [128]u8 = undefined;
-    const len = utf8PrefixLen(text, text_buf.len - 1);
-    @memcpy(text_buf[0..len], text[0..len]);
+    const sanitized = text_sanitize.sanitizeDisplayText(text, text_buf[0 .. text_buf.len - 1]);
+    const len = sanitized.len;
     text_buf[len] = 0;
     const text_ptr: [*c]const u8 = &text_buf;
     return rl.MeasureTextEx(font, text_ptr, font_size, 1);
