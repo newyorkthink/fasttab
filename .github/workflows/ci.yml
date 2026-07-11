@@ -64,16 +64,18 @@ jobs:
         run: |
           set -euxo pipefail
           VERSION="$(tr -d '[:space:]' < VERSION)"
-          [[ "$VERSION" == "2.0.0" ]]
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$VERSION" == "2.0.1" ]]
           python -m py_compile .github/scripts/*.py
           python -c "import xml.etree.ElementTree as ET; ET.parse('packaging/fasttab.svg')"
           bash -n setup.sh build_appimage.sh build_packages.sh
           test -s LICENSE.md
-          grep -Fq 'X-AppImage-Version=2.0.0' packaging/fasttab.desktop
-          grep -Fq 'const FASTTAB_VERSION = "2.0.0";' src/main.zig
-          grep -Fq 'fn stdoutPrint' src/main.zig
-          grep -Fq 'fn grabWinIsoLeftTab' src/main.zig
-          grep -Fq 'XK_ISO_Left_Tab' src/main.zig
+          grep -Fq "X-AppImage-Version=$VERSION" packaging/fasttab.desktop
+          grep -Fq "const FASTTAB_VERSION = \"$VERSION\";" src/main.zig
+          grep -Fq 'pub fn sanitizeDisplayText' src/text_sanitize.zig
+          grep -Fq 'fn processSnapshotQueue' src/app.zig
+          grep -Fq 'fn refreshViewableThumbnailsForShow' src/app.zig
+          grep -Fq 'preserving cached preview and retrying later' src/app.zig
           grep -Fq 'README.zh-CN.md' README.md
           grep -Fq 'License:        GPL-3.0-only' build_packages.sh
           grep -Fq '/usr/share/doc/fasttab/LICENSE.md' build_packages.sh
@@ -100,12 +102,13 @@ jobs:
 
       - name: Validate CLI streams
         run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
           test -x zig-out/bin/fasttab
           zig-out/bin/fasttab --help >help.out 2>help.err
-          grep -Fq 'FastTab 2.0.0' help.out
+          grep -Fq "FastTab $VERSION" help.out
           test ! -s help.err
           zig-out/bin/fasttab --version >version.out 2>version.err
-          grep -Fxq 'FastTab 2.0.0' version.out
+          grep -Fxq "FastTab $VERSION" version.out
           test ! -s version.err
           set +e
           zig-out/bin/fasttab --invalid >invalid.out 2>invalid.err
@@ -242,16 +245,11 @@ jobs:
         id: version
         run: |
           VERSION="$(tr -d '[:space:]' < VERSION)"
-          if [[ "$VERSION" != "2.0.0" ]]; then
-            echo "Expected formal release version 2.0.0, found: $VERSION" >&2
-            exit 1
-          fi
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-          if git rev-parse --verify --quiet "refs/tags/$VERSION" >/dev/null && \
-             git show "refs/tags/$VERSION:build_packages.sh" | grep -Fq 'License:        GPL-3.0-only'; then
+          if git rev-parse --verify --quiet "refs/tags/$VERSION" >/dev/null; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "FastTab $VERSION already contains the corrected GPL package metadata."
+            echo "Release tag $VERSION already exists; skipping publication."
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
@@ -282,7 +280,7 @@ jobs:
             test -s "dist/fasttab-${VERSION}-1.${arch}.rpm.sha256"
           done
           if find dist -maxdepth 1 -type f -name 'fasttab-*' ! -name '*.rpm' ! -name '*.rpm.sha256' | grep -q .; then
-            echo 'Standalone binary artifacts are not allowed in the 2.0.0 release.' >&2
+            echo 'Standalone binary artifacts are not allowed in the release.' >&2
             exit 1
           fi
 
@@ -290,45 +288,27 @@ jobs:
         if: steps.version.outputs.publish == 'true'
         run: |
           cat > RELEASE_NOTES.md <<'NOTES'
-          FastTab 2.0.0 is the first formal multi-architecture release.
+          FastTab 2.0.1 is a stability release focused on preview persistence and switcher latency.
 
           Highlights:
 
-          - Correct CLI stream behavior: help and version use standard output; errors use standard error.
-          - Complete Win+Shift+Tab support, including keyboard layouts that emit a distinct ISO_Left_Tab keycode.
-          - Native x86_64 and ARM64/AArch64 builds.
-          - AppImage, DEB, and RPM packages for both architectures.
-          - Complete hicolor icon hierarchy at 16, 32, 64, 128, and 256 pixels, scalable SVG, and `/usr/share/pixmaps/fasttab.png`.
-          - English and Simplified Chinese documentation.
-          - Correct GPL-3.0-only package metadata and bundled license text.
-
-          Release files:
-
-          - `FastTab-2.0.0-x86_64.AppImage`
-          - `FastTab-2.0.0-aarch64.AppImage`
-          - `fasttab_2.0.0_amd64.deb`
-          - `fasttab_2.0.0_arm64.deb`
-          - `fasttab-2.0.0-1.x86_64.rpm`
-          - `fasttab-2.0.0-1.aarch64.rpm`
-          - SHA-256 checksum files and AppImage zsync metadata
+          - Preserves Firefox, Vivaldi, and other browser previews across repeated Alt+Tab and Win+Tab sessions.
+          - Keeps the previous cached preview when a transient GLX refresh or reacquire operation fails.
+          - No longer removes a tracked window because of a temporary GLX error.
+          - Generates fallback snapshots incrementally after the switcher is hidden, eliminating the pause when Alt or Super is released.
+          - Replaces unsupported Nerd Font and Powerline private-use title glyphs with a plain separator instead of `?`.
+          - Retains x86_64 and ARM64/AArch64 AppImage, DEB, and RPM packages.
 
           FastTab requires Linux, X11, and hardware-accelerated OpenGL.
           NOTES
 
-      - name: Move the 2.0.0 tag to the corrected release commit
-        if: steps.version.outputs.publish == 'true'
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          git tag -f "$VERSION" "$GITHUB_SHA"
-          git push --force origin "refs/tags/$VERSION"
-
-      - name: Publish FastTab 2.0.0
+      - name: Publish FastTab release
         if: steps.version.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: 2.0.0
+          tag_name: ${{ steps.version.outputs.version }}
           target_commitish: ${{ github.sha }}
-          name: FastTab 2.0.0
+          name: FastTab ${{ steps.version.outputs.version }}
           body_path: RELEASE_NOTES.md
           files: dist/*
           overwrite_files: true

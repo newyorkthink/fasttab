@@ -2,59 +2,79 @@ name: Release Audit
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_run:
+    workflows: [CI/CD]
+    types: [completed]
 
 permissions:
   contents: read
 
 jobs:
   audit-release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
-      - name: Validate 2.0.0 tag source
+      - name: Resolve and validate release tag source
+        id: version
         run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           git fetch --tags --force
-          git show 2.0.0:VERSION | grep -Fxq '2.0.0'
-          git show 2.0.0:build_packages.sh | grep -Fq 'License:        GPL-3.0-only'
-          git show 2.0.0:build_packages.sh | grep -Fq '/usr/share/doc/fasttab/LICENSE.md'
+          git show "${VERSION}:VERSION" | grep -Fxq "$VERSION"
+          git show "${VERSION}:build_packages.sh" | grep -Fq 'License:        GPL-3.0-only'
+          git show "${VERSION}:build_packages.sh" | grep -Fq '/usr/share/doc/fasttab/LICENSE.md'
 
-      - name: Validate published release assets
+      - name: Wait for and validate published release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/2.0.0" > release.json
+          for attempt in $(seq 1 20); do
+            if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${VERSION}" > release.json 2>/dev/null; then
+              break
+            fi
+            if [[ "$attempt" == 20 ]]; then
+              echo "Release ${VERSION} was not published within the audit window." >&2
+              exit 1
+            fi
+            sleep 15
+          done
+
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
+          version = os.environ["VERSION"]
           release = json.loads(Path("release.json").read_text(encoding="utf-8"))
-          assert release["tag_name"] == "2.0.0"
+          assert release["tag_name"] == version
           assert release["draft"] is False
           assert release["prerelease"] is False
 
           expected = {
-              "FastTab-2.0.0-x86_64.AppImage",
-              "FastTab-2.0.0-x86_64.AppImage.sha256",
-              "FastTab-2.0.0-x86_64.AppImage.zsync",
-              "FastTab-2.0.0-aarch64.AppImage",
-              "FastTab-2.0.0-aarch64.AppImage.sha256",
-              "FastTab-2.0.0-aarch64.AppImage.zsync",
-              "fasttab_2.0.0_amd64.deb",
-              "fasttab_2.0.0_amd64.deb.sha256",
-              "fasttab_2.0.0_arm64.deb",
-              "fasttab_2.0.0_arm64.deb.sha256",
-              "fasttab-2.0.0-1.x86_64.rpm",
-              "fasttab-2.0.0-1.x86_64.rpm.sha256",
-              "fasttab-2.0.0-1.aarch64.rpm",
-              "fasttab-2.0.0-1.aarch64.rpm.sha256",
+              f"FastTab-{version}-x86_64.AppImage",
+              f"FastTab-{version}-x86_64.AppImage.sha256",
+              f"FastTab-{version}-x86_64.AppImage.zsync",
+              f"FastTab-{version}-aarch64.AppImage",
+              f"FastTab-{version}-aarch64.AppImage.sha256",
+              f"FastTab-{version}-aarch64.AppImage.zsync",
+              f"fasttab_{version}_amd64.deb",
+              f"fasttab_{version}_amd64.deb.sha256",
+              f"fasttab_{version}_arm64.deb",
+              f"fasttab_{version}_arm64.deb.sha256",
+              f"fasttab-{version}-1.x86_64.rpm",
+              f"fasttab-{version}-1.x86_64.rpm.sha256",
+              f"fasttab-{version}-1.aarch64.rpm",
+              f"fasttab-{version}-1.aarch64.rpm.sha256",
           }
 
           assets = {asset["name"]: asset for asset in release["assets"]}
