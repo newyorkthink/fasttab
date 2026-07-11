@@ -156,7 +156,12 @@ DEB 和 RPM 包会安装：
 /usr/share/icons/hicolor/256x256/apps/fasttab.png
 /usr/share/icons/hicolor/scalable/apps/fasttab.svg
 /usr/share/pixmaps/fasttab.png
+/usr/share/doc/fasttab/LICENSE.md
 ```
+
+## 许可证
+
+FastTab 使用 GNU 通用公共许可证第 3 版（`GPL-3.0-only`）发布，完整条款见 `LICENSE.md`。
 
 ## 技术原理
 
