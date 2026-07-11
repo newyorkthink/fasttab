@@ -148,19 +148,19 @@ jobs:
 
       - name: Build DEB
         run: |
-          FASTTAB_SKIP_RPM=1 ./build_packages.sh --native-only
+          FASTTAB_SKIP_RPM=1 bash ./build_packages.sh --native-only
           mkdir -p deb-dist
           cp -a dist/. deb-dist/
 
       - name: Build RPM
         run: |
-          FASTTAB_SKIP_DEB=1 ./build_packages.sh --native-only
+          FASTTAB_SKIP_DEB=1 bash ./build_packages.sh --native-only
           mkdir -p rpm-dist
           cp -a dist/. rpm-dist/
 
       - name: Build AppImage
         run: |
-          ./build_packages.sh --appimage-only
+          bash ./build_packages.sh --appimage-only
           cp -a deb-dist/. dist/
           cp -a rpm-dist/. dist/
 
