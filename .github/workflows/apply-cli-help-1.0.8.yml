@@ -1,0 +1,176 @@
+name: Apply CLI help and version options
+
+on:
+  push:
+    branches:
+      - agent/cli-help-1.0.8
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/cli-help-1.0.8
+          fetch-depth: 0
+
+      - name: Patch CLI and release metadata
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path('src/main.zig')
+          text = main.read_text()
+
+          text = text.replace(
+              'const SHOW_DELAY_FRAMES: u8 = 1;\n',
+              'const SHOW_DELAY_FRAMES: u8 = 1;\nconst FASTTAB_VERSION = "1.0.8";\n',
+              1,
+          )
+
+          old = '''pub fn main() !void {
+              installFastSignalExit();
+              var args_iter = std.process.args();
+              _ = args_iter.next(); // skip program name
+
+              while (args_iter.next()) |arg| {
+                  if (std.mem.eql(u8, arg, "daemon") or std.mem.eql(u8, arg, "--daemon")) continue;
+
+                  std.debug.print("Unknown command: {s}\\n", .{arg});
+                  std.debug.print("Usage: fasttab [daemon]\\n", .{});
+                  std.process.exit(1);
+              }
+
+              var instance_lock = (try InstanceLock.acquire()) orelse {
+                  std.debug.print("Error: an instance of FastTab is already running.\\n", .{});
+                  std.process.exit(1);
+              };
+              defer instance_lock.deinit();
+
+              return runDaemon();
+          }
+          '''
+
+          new = '''fn printHelp() void {
+              std.debug.print(
+                  \\FastTab {s}
+                  \\Fast GPU-accelerated X11 window switcher.
+                  \\
+
+                  \\Usage:
+                  \\  fasttab [COMMAND] [OPTIONS]
+                  \\
+
+                  \\Commands:
+                  \\  daemon              Run the FastTab daemon (default)
+                  \\
+
+                  \\Options:
+                  \\  -h, --help          Show this help and exit
+                  \\  -V, --version       Show version information and exit
+                  \\
+
+              , .{FASTTAB_VERSION});
+          }
+
+          fn printVersion() void {
+              std.debug.print("FastTab {s}\\n", .{FASTTAB_VERSION});
+          }
+
+          pub fn main() !void {
+              installFastSignalExit();
+              var args_iter = std.process.args();
+              _ = args_iter.next(); // skip program name
+
+              while (args_iter.next()) |arg| {
+                  if (std.mem.eql(u8, arg, "daemon") or std.mem.eql(u8, arg, "--daemon")) continue;
+
+                  if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
+                      printHelp();
+                      return;
+                  }
+
+                  if (std.mem.eql(u8, arg, "-V") or std.mem.eql(u8, arg, "--version")) {
+                      printVersion();
+                      return;
+                  }
+
+                  std.debug.print("Error: unknown argument: {s}\\n", .{arg});
+                  std.debug.print("Try 'fasttab --help' for more information.\\n", .{});
+                  std.process.exit(2);
+              }
+
+              var instance_lock = (try InstanceLock.acquire()) orelse {
+                  std.debug.print("Error: an instance of FastTab is already running.\\n", .{});
+                  std.process.exit(1);
+              };
+              defer instance_lock.deinit();
+
+              return runDaemon();
+          }
+          '''
+
+          if old not in text:
+              raise SystemExit('main argument parser block not found')
+          main.write_text(text.replace(old, new, 1))
+
+          Path('VERSION').write_text('1.0.8\n')
+
+          desktop = Path('packaging/fasttab.desktop')
+          text = desktop.read_text().replace('X-AppImage-Version=1.0.7', 'X-AppImage-Version=1.0.8', 1)
+          desktop.write_text(text)
+
+          readme = Path('README.md')
+          text = readme.read_text().replace('1.0.7', '1.0.8')
+          marker = '## Installation instructions\n'
+          cli = '''## Command-line options
+
+```text
+fasttab                  Start the daemon (default)
+fasttab daemon           Start the daemon explicitly
+fasttab --daemon         Start the daemon explicitly
+fasttab -h, --help       Show help
+fasttab -V, --version    Show the installed version
+```
+
+If FastTab is already running, a later launch prints an error and exits without terminating the existing daemon.
+
+'''
+          if marker not in text:
+              raise SystemExit('README installation marker not found')
+          text = text.replace(marker, cli + marker, 1)
+          readme.write_text(text)
+
+          ci = Path('.github/workflows/ci.yml')
+          text = ci.read_text()
+          marker = "          grep -Fq 'Error: an instance of FastTab is already running.' src/main.zig\n"
+          addition = marker + "          grep -Fq 'const FASTTAB_VERSION = \"' src/main.zig\n          grep -Fq 'fn printHelp() void' src/main.zig\n          grep -Fq '\"--help\"' src/main.zig\n          grep -Fq '\"--version\"' src/main.zig\n"
+          if marker not in text:
+              raise SystemExit('CI single-instance marker not found')
+          text = text.replace(marker, addition, 1)
+          text = text.replace(
+              'echo "FastTab ${VERSION} uses simple single-instance startup behavior."',
+              'echo "FastTab ${VERSION} adds complete command-line help and version options."',
+              1,
+          )
+          text = text.replace(
+              'echo "If FastTab is already running, a later launch now prints an error and exits immediately. It no longer terminates or replaces the existing daemon."',
+              'echo "FastTab now supports -h/--help and -V/--version, keeps daemon as the default command, and reports unknown arguments with a clear help hint."',
+              1,
+          )
+          ci.write_text(text)
+
+          Path('.github/workflows/apply-cli-help-1.0.8.yml').unlink()
+          PY
+
+      - name: Commit changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Add CLI help and version options"
+          git push origin HEAD:agent/cli-help-1.0.8
