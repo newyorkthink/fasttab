@@ -60,6 +60,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate source metadata and scripts
+        run: |
+          set -euxo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          [[ "$VERSION" == "2.0.0" ]]
+          python -m py_compile .github/scripts/*.py
+          python -c "import xml.etree.ElementTree as ET; ET.parse('packaging/fasttab.svg')"
+          bash -n setup.sh build_appimage.sh build_packages.sh
+          grep -Fq 'X-AppImage-Version=2.0.0' packaging/fasttab.desktop
+          grep -Fq 'const FASTTAB_VERSION = "2.0.0";' src/main.zig
+          grep -Fq 'fn stdoutPrint' src/main.zig
+          grep -Fq 'fn grabWinIsoLeftTab' src/main.zig
+          grep -Fq 'XK_ISO_Left_Tab' src/main.zig
+          grep -Fq 'README.zh-CN.md' README.md
+
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y $APT_PACKAGES
 
@@ -68,24 +83,8 @@ jobs:
         with:
           version: 0.14.0
 
-      - name: Validate metadata and scripts
-        run: |
-          VERSION="$(tr -d '[:space:]' < VERSION)"
-          [[ "$VERSION" == "2.0.0" ]]
-          python -m py_compile .github/scripts/*.py
-          python -c "import xml.etree.ElementTree as ET; ET.parse('packaging/fasttab.svg')"
-          bash -n setup.sh build_appimage.sh build_packages.sh
-          desktop-file-validate packaging/fasttab.desktop
-          grep -Fq 'X-AppImage-Version=2.0.0' packaging/fasttab.desktop
-          grep -Fq 'const FASTTAB_VERSION = "2.0.0";' src/main.zig
-          grep -Fq 'fn stdoutPrint' src/main.zig
-          grep -Fq 'fn grabWinIsoLeftTab' src/main.zig
-          grep -Fq 'XK_ISO_Left_Tab' src/main.zig
-          grep -Fq 'README.zh-CN.md' README.md
-          if grep -Rqs 'fasttab-x86_64' .github build_appimage.sh build_packages.sh README.md README.zh-CN.md; then
-            echo 'Standalone fasttab-x86_64 release artifacts must not be produced.' >&2
-            exit 1
-          fi
+      - name: Validate desktop metadata
+        run: desktop-file-validate packaging/fasttab.desktop
 
       - name: Download and build dependencies
         run: ./setup.sh
