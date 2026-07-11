@@ -37,5 +37,8 @@ void main() {
         }
     }
 
-    finalColor = (color / totalSamples) * fragColor;
+    // XComposite clients may provide valid RGB with zero or undefined alpha.
+    // Window previews are opaque surfaces, so preserve RGB and use the UI tint alpha.
+    vec4 averaged = color / totalSamples;
+    finalColor = vec4(averaged.rgb * fragColor.rgb, fragColor.a);
 }
