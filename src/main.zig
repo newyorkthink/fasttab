@@ -11,7 +11,7 @@ const c = @cImport({
 
 const log = std.log.scoped(.fasttab);
 const SHOW_DELAY_FRAMES: u8 = 1;
-const FASTTAB_VERSION = "2.0.1";
+const FASTTAB_VERSION = "2.0.2";
 const LOCK_VARIANTS = [_]u16{
     0,
     x11.MOD_LOCK,

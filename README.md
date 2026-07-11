@@ -10,11 +10,11 @@
 
 FastTab is a fast GPU-accelerated Alt+Tab and Win+Tab window switcher for X11, written in Zig with Raylib and OpenGL.
 
-## FastTab 2.0.1
+## FastTab 2.0.2
 
-FastTab 2.0.1 is a stability release. It includes:
+FastTab 2.0.2 is a cross-workspace preview persistence release. It includes:
 
-- Preserve Firefox, Vivaldi, and other browser previews across repeated switches and transient GLX failures.
+- Capture the active window once before i3 changes workspace, preserving Firefox, Code Desktop, Antigravity, and other previews across repeated switches.
 - Build cached previews incrementally after hiding, removing the pause when `Alt` or `Super` is released.
 - Replace unsupported Nerd Font and Powerline private-use title glyphs with a plain separator instead of `?`.
 - Reliable global `Alt+Tab` switching and current-workspace `Win+Tab` switching.
@@ -61,16 +61,16 @@ Each release provides the following files:
 
 | Architecture | AppImage | DEB | RPM |
 |---|---|---|---|
-| x86_64 / AMD64 | `FastTab-2.0.1-x86_64.AppImage` | `fasttab_2.0.1_amd64.deb` | `fasttab-2.0.1-1.x86_64.rpm` |
-| ARM64 / AArch64 | `FastTab-2.0.1-aarch64.AppImage` | `fasttab_2.0.1_arm64.deb` | `fasttab-2.0.1-1.aarch64.rpm` |
+| x86_64 / AMD64 | `FastTab-2.0.2-x86_64.AppImage` | `fasttab_2.0.2_amd64.deb` | `fasttab-2.0.2-1.x86_64.rpm` |
+| ARM64 / AArch64 | `FastTab-2.0.2-aarch64.AppImage` | `fasttab_2.0.2_arm64.deb` | `fasttab-2.0.2-1.aarch64.rpm` |
 
 SHA-256 checksum files and AppImage zsync metadata are published alongside the packages.
 
 ### AppImage
 
 ```bash
-chmod +x FastTab-2.0.1-x86_64.AppImage
-./FastTab-2.0.1-x86_64.AppImage
+chmod +x FastTab-2.0.2-x86_64.AppImage
+./FastTab-2.0.2-x86_64.AppImage
 ```
 
 Use the `aarch64` file on ARM64 systems.
@@ -78,15 +78,15 @@ Use the `aarch64` file on ARM64 systems.
 ### Debian / Ubuntu
 
 ```bash
-sudo apt install ./fasttab_2.0.1_amd64.deb
+sudo apt install ./fasttab_2.0.2_amd64.deb
 ```
 
-Use `fasttab_2.0.1_arm64.deb` on ARM64 systems.
+Use `fasttab_2.0.2_arm64.deb` on ARM64 systems.
 
 ### Fedora / RHEL-compatible distributions
 
 ```bash
-sudo dnf install ./fasttab-2.0.1-1.x86_64.rpm
+sudo dnf install ./fasttab-2.0.2-1.x86_64.rpm
 ```
 
 Use the `aarch64` RPM on ARM64 systems.

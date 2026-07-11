@@ -65,6 +65,8 @@ pub const App = struct {
     reacquire_cursor: usize,
     snapshot_pending: bool,
     snapshot_cursor: usize,
+    switch_origin_window: x11.xcb.xcb_window_t,
+    switch_origin_snapshot_ready: bool,
     mru_list: std.ArrayList(x11.xcb.xcb_window_t),
     workspace_names: std.ArrayList([]u8),
     current_workspace: ?u32,
@@ -152,6 +154,8 @@ pub const App = struct {
             .reacquire_cursor = 0,
             .snapshot_pending = false,
             .snapshot_cursor = 0,
+            .switch_origin_window = 0,
+            .switch_origin_snapshot_ready = false,
             .mru_list = mru_list,
             .workspace_names = workspace_names,
             .current_workspace = null,
@@ -648,6 +652,8 @@ pub const App = struct {
         }
 
         const active_win = x11.getActiveWindow(self.conn.conn, self.conn.root, self.conn.atoms);
+        self.switch_origin_window = active_win;
+        self.switch_origin_snapshot_ready = active_win != 0 and self.cacheSnapshotForWindow(active_win);
         if (active_win != 0) {
             self.recordMruActivation(active_win);
         }
@@ -709,6 +715,8 @@ pub const App = struct {
             return;
         }
 
+        self.switch_origin_window = active_win;
+        self.switch_origin_snapshot_ready = self.cacheSnapshotForWindow(active_win);
         self.recordMruActivation(active_win);
         self.reorderByMru();
         self.refreshWorkspaceInfo();
@@ -855,6 +863,12 @@ pub const App = struct {
         const display = self.displayItems();
         if (display.len > 0 and self.selected_index < display.len) {
             const selected_id = display[self.selected_index].id;
+            if (self.switch_origin_window != 0 and
+                self.switch_origin_window != selected_id and
+                !self.switch_origin_snapshot_ready)
+            {
+                self.switch_origin_snapshot_ready = self.cacheSnapshotForWindow(self.switch_origin_window);
+            }
             self.recordMruActivation(selected_id);
             x11.activateWindow(self.conn.conn, self.conn.root, selected_id, self.conn.atoms);
             log.debug("Confirmed: activating window {x}", .{selected_id});
@@ -873,6 +887,8 @@ pub const App = struct {
         self.state = .idle;
         self.shift_held = false;
         self.tab_pressed_during_shift = false;
+        self.switch_origin_window = 0;
+        self.switch_origin_snapshot_ready = false;
         self.resetSwitchMode();
 
         log.debug(
@@ -904,6 +920,8 @@ pub const App = struct {
         self.state = .idle;
         self.shift_held = false;
         self.tab_pressed_during_shift = false;
+        self.switch_origin_window = 0;
+        self.switch_origin_snapshot_ready = false;
         self.resetSwitchMode();
 
         log.debug(
@@ -923,6 +941,7 @@ pub const App = struct {
 
             if (!tex.rebind(self.conn)) {
                 log.debug("GLX rebind failed for window {x}; preserving cached preview and retrying later", .{drawable});
+                _ = self.cacheSnapshotForWindow(drawable);
                 tex.invalidate(self.conn);
                 self.markThumbnailReady(drawable, false);
                 self.reacquire_pending = true;
@@ -1019,12 +1038,18 @@ pub const App = struct {
                     }
                     continue;
                 }
+                _ = self.cacheSnapshotForItem(item);
                 if (tex.bound) tex.invalidate(self.conn);
             }
 
             item.thumbnail_ready = false;
         }
         if (layout_dirty) self.updateLayout();
+    }
+
+    fn cacheSnapshotForWindow(self: *Self, window_id: x11.xcb.xcb_window_t) bool {
+        const item = self.findItemByWindowId(window_id) orelse return false;
+        return self.cacheSnapshotForItem(item);
     }
 
     fn scheduleSnapshotRefresh(self: *Self) void {
