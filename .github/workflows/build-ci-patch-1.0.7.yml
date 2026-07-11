@@ -1,0 +1,39 @@
+name: Build patched CI artifact
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  patch-ci:
+    if: github.head_ref == 'agent/single-instance-1.0.7'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/single-instance-1.0.7
+
+      - name: Patch CI file
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          src = Path('.github/workflows/ci.yml')
+          text = src.read_text()
+          text = text.replace("grep -Fq 'Exec=fasttab daemon --replace' packaging/fasttab.desktop", "grep -Fq 'Exec=fasttab daemon' packaging/fasttab.desktop", 1)
+          text = text.replace("          grep -Fq 'fn shouldTerminateExistingFastTab' src/main.zig\n          grep -Fq 'process_group != my_process_group' src/main.zig\n", "          grep -Fq 'const InstanceLock = struct' src/main.zig\n          grep -Fq 'c.flock(file.handle, c.LOCK_EX | c.LOCK_NB)' src/main.zig\n          grep -Fq 'Error: an instance of FastTab is already running.' src/main.zig\n")
+          text = text.replace("grep -Rqs '^Exec=fasttab daemon --replace$' AppDir", "grep -Rqs '^Exec=fasttab daemon$' AppDir", 1)
+          text = text.replace("grep -Fq 'set -- daemon --replace \"$@\"' AppDir/AppRun.sh", "grep -Fq 'set -- daemon \"$@\"' AppDir/AppRun.sh", 1)
+          text = text.replace('echo "FastTab ${VERSION} fixes AppImage launches through a fasttab symlink."', 'echo "FastTab ${VERSION} uses simple single-instance startup behavior."', 1)
+          text = text.replace('echo "The --replace scan now ignores processes in the current launch process group, preventing an AppImage runtime invoked through a symlink named fasttab from killing its own wrapper."', 'echo "If FastTab is already running, a later launch now prints an error and exits immediately. It no longer terminates or replaces the existing daemon."', 1)
+          Path('ci.yml').write_text(text)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patched-ci-file
+          path: ci.yml
+          if-no-files-found: error
