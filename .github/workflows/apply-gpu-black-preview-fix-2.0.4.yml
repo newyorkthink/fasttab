@@ -29,3 +29,5 @@ jobs:
           git add -A
           git commit -m 'Fix GPU-backed black previews'
           git push origin HEAD:main
+
+# Trigger after registration on the default branch.
