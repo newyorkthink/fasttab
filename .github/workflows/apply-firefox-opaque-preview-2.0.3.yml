@@ -4,13 +4,18 @@ on:
   push:
     branches:
       - agent/fix-firefox-transparent-preview-2.0.3
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
   apply:
-    if: github.event.head_commit.message != 'Fix Firefox transparent previews'
+    if: >-
+      (github.event_name == 'pull_request' && github.head_ref == 'agent/fix-firefox-transparent-preview-2.0.3') ||
+      (github.event_name == 'push' && github.event.head_commit.message != 'Fix Firefox transparent previews')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
