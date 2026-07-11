@@ -1,16 +1,15 @@
 name: Apply CLI help and version options
 
 on:
-  push:
-    branches:
-      - agent/cli-help-1.0.8
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: github.actor != 'github-actions[bot]'
+    if: github.head_ref == 'agent/cli-help-1.0.8' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
