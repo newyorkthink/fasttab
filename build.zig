@@ -25,16 +25,29 @@ fn linkFastTabDependencies(step: *std.Build.Step.Compile, b: *std.Build) void {
     step.linkLibC();
 }
 
+fn generatedPath(b: *std.Build, sub_path: []const u8) std.Build.LazyPath {
+    return b.path(b.fmt("zig-cache/fasttab-generated-src/{s}", .{sub_path}));
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // Copy src/ into Zig's cache and apply the GPU-preview compatibility patch.
+    // The tracked source tree stays clean and every build starts from a fresh copy.
+    const prepare_sources = b.addSystemCommand(&.{
+        "python3",
+        "tools/generate_gpu_preview_sources.py",
+        "zig-cache/fasttab-generated-src",
+    });
+
     const exe = b.addExecutable(.{
         .name = "fasttab",
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = generatedPath(b, "main.zig"),
         .target = target,
         .optimize = optimize,
     });
+    exe.step.dependOn(&prepare_sources.step);
     linkFastTabDependencies(exe, b);
     b.installArtifact(exe);
 
@@ -46,10 +59,11 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const exe_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = generatedPath(b, "main.zig"),
         .target = target,
         .optimize = optimize,
     });
+    exe_unit_tests.step.dependOn(&prepare_sources.step);
     linkFastTabDependencies(exe_unit_tests, b);
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
@@ -57,12 +71,13 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_exe_unit_tests.step);
 
     const ui_test = b.addTest(.{
-        .root_source_file = b.path("src/tests/ui_test.zig"),
+        .root_source_file = generatedPath(b, "tests/ui_test.zig"),
         .target = target,
         .optimize = optimize,
     });
+    ui_test.step.dependOn(&prepare_sources.step);
     const ui_module = b.createModule(.{
-        .root_source_file = b.path("src/ui.zig"),
+        .root_source_file = generatedPath(b, "ui.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -73,41 +88,44 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(ui_test).step);
 
     const navigation_test = b.addTest(.{
-        .root_source_file = b.path("src/tests/navigation_test.zig"),
+        .root_source_file = generatedPath(b, "tests/navigation_test.zig"),
         .target = target,
         .optimize = optimize,
     });
+    navigation_test.step.dependOn(&prepare_sources.step);
     navigation_test.root_module.addImport("navigation", b.createModule(.{
-        .root_source_file = b.path("src/navigation.zig"),
+        .root_source_file = generatedPath(b, "navigation.zig"),
         .target = target,
         .optimize = optimize,
     }));
     test_step.dependOn(&b.addRunArtifact(navigation_test).step);
 
     const hardening_test = b.addTest(.{
-        .root_source_file = b.path("src/tests/hardening_test.zig"),
+        .root_source_file = generatedPath(b, "tests/hardening_test.zig"),
         .target = target,
         .optimize = optimize,
     });
+    hardening_test.step.dependOn(&prepare_sources.step);
     hardening_test.root_module.addImport("navigation", b.createModule(.{
-        .root_source_file = b.path("src/navigation.zig"),
+        .root_source_file = generatedPath(b, "navigation.zig"),
         .target = target,
         .optimize = optimize,
     }));
     hardening_test.root_module.addImport("layout", b.createModule(.{
-        .root_source_file = b.path("src/layout.zig"),
+        .root_source_file = generatedPath(b, "layout.zig"),
         .target = target,
         .optimize = optimize,
     }));
     test_step.dependOn(&b.addRunArtifact(hardening_test).step);
 
     const app_filter_test = b.addTest(.{
-        .root_source_file = b.path("src/tests/app_filter_test.zig"),
+        .root_source_file = generatedPath(b, "tests/app_filter_test.zig"),
         .target = target,
         .optimize = optimize,
     });
+    app_filter_test.step.dependOn(&prepare_sources.step);
     const app_module = b.createModule(.{
-        .root_source_file = b.path("src/app.zig"),
+        .root_source_file = generatedPath(b, "app.zig"),
         .target = target,
         .optimize = optimize,
     });
