@@ -11,6 +11,7 @@ const c = @cImport({
 
 const log = std.log.scoped(.fasttab);
 const SHOW_DELAY_FRAMES: u8 = 1;
+const FASTTAB_VERSION = "1.0.8";
 
 const IdleTabRoute = enum {
     all_windows,
@@ -29,6 +30,28 @@ fn shouldStartSingleWindowFallback(window_count: usize) bool {
     return window_count == 1;
 }
 
+fn printHelp() void {
+    std.debug.print(
+        "FastTab {s}\n" ++
+            "Fast GPU-accelerated X11 window switcher.\n\n" ++
+            "Usage:\n" ++
+            "  fasttab [COMMAND] [OPTIONS]\n\n" ++
+            "Commands:\n" ++
+            "  daemon              Run the FastTab daemon (default)\n" ++
+            "  help                Show this help and exit\n" ++
+            "  version             Show version information and exit\n\n" ++
+            "Options:\n" ++
+            "  --daemon            Run the FastTab daemon\n" ++
+            "  -h, --help          Show this help and exit\n" ++
+            "  -v, -V, --version   Show version information and exit\n",
+        .{FASTTAB_VERSION},
+    );
+}
+
+fn printVersion() void {
+    std.debug.print("FastTab {s}\n", .{FASTTAB_VERSION});
+}
+
 pub fn main() !void {
     installFastSignalExit();
     var args_iter = std.process.args();
@@ -37,9 +60,26 @@ pub fn main() !void {
     while (args_iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "daemon") or std.mem.eql(u8, arg, "--daemon")) continue;
 
-        std.debug.print("Unknown command: {s}\n", .{arg});
-        std.debug.print("Usage: fasttab [daemon]\n", .{});
-        std.process.exit(1);
+        if (std.mem.eql(u8, arg, "help") or
+            std.mem.eql(u8, arg, "-h") or
+            std.mem.eql(u8, arg, "--help"))
+        {
+            printHelp();
+            return;
+        }
+
+        if (std.mem.eql(u8, arg, "version") or
+            std.mem.eql(u8, arg, "-v") or
+            std.mem.eql(u8, arg, "-V") or
+            std.mem.eql(u8, arg, "--version"))
+        {
+            printVersion();
+            return;
+        }
+
+        std.debug.print("Error: unknown argument: {s}\n", .{arg});
+        std.debug.print("Try 'fasttab --help' for more information.\n", .{});
+        std.process.exit(2);
     }
 
     var instance_lock = (try InstanceLock.acquire()) orelse {

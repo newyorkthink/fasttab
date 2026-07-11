@@ -69,6 +69,11 @@ jobs:
           grep -Fq 'const InstanceLock = struct' src/main.zig
           grep -Fq 'c.flock(file.handle, c.LOCK_EX | c.LOCK_NB)' src/main.zig
           grep -Fq 'Error: an instance of FastTab is already running.' src/main.zig
+          grep -Fq 'const FASTTAB_VERSION = "' src/main.zig
+          grep -Fq 'fn printHelp() void' src/main.zig
+          grep -Fq '"--help"' src/main.zig
+          grep -Fq '"--version"' src/main.zig
+          grep -Fq "const FASTTAB_VERSION = \"${VERSION}\";" src/main.zig
           grep -Fq -- "--appimage-addenvs 'REUSE_CHECK_DELAY=0'" build_appimage.sh
           grep -Fq 'zsyncmake -u "$OUTNAME" -o "$APPIMAGE.zsync" "$APPIMAGE"' build_appimage.sh
           if grep -Fq 'const is_super =' src/main.zig; then
@@ -189,9 +194,9 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           {
-            echo "FastTab ${VERSION} uses simple single-instance startup behavior."
+            echo "FastTab ${VERSION} adds complete command-line help and version options."
             echo
-            echo "If FastTab is already running, a later launch now prints an error and exits immediately. It no longer terminates or replaces the existing daemon."
+            echo "FastTab now supports help/-h/--help and version/-v/-V/--version, keeps daemon as the default command, and reports unknown arguments with a clear help hint."
             echo
             echo "Included downloads:"
             echo
