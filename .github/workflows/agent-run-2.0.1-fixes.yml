@@ -6,16 +6,12 @@ on:
       - agent/fix-preview-font-exit-lag-2.0.1
     paths:
       - .github/workflows/agent-run-2.0.1-fixes.yml
-  pull_request:
-    branches:
-      - main
 
 permissions:
   contents: write
 
 jobs:
   apply:
-    if: github.event_name == 'push' || github.head_ref == 'agent/fix-preview-font-exit-lag-2.0.1'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -48,13 +44,13 @@ jobs:
           PYCODE
           python /tmp/extract_fix.py
           python /tmp/apply_fix.py
-          rm -f .github/workflows/agent-run-2.0.1-fixes.yml
 
-      - name: Commit the completed fix
+      - name: Commit source and documentation changes
         run: |
-          git diff --check
+          git restore --source=HEAD -- .github/workflows/ci.yml .github/workflows/release-audit.yml
+          git restore --source=HEAD -- .github/workflows/agent-apply-2.0.1-fixes.yml .github/workflows/agent-run-2.0.1-fixes.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -A
+          git add VERSION README.md README.zh-CN.md build_packages.sh packaging/fasttab.desktop src
           git commit -m "Fix preview persistence, title glyphs, and exit latency"
           git push origin HEAD:agent/fix-preview-font-exit-lag-2.0.1
