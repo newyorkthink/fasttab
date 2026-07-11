@@ -36,9 +36,9 @@ pub fn build(b: *std.Build) void {
     // Copy src/ into Zig's cache and apply the GPU-preview compatibility patch.
     // The tracked source tree stays clean and every build starts from a fresh copy.
     const prepare_sources = b.addSystemCommand(&.{
-        "python3",
-        "tools/generate_gpu_preview_sources.py",
-        "zig-cache/fasttab-generated-src",
+        "bash",
+        "-lc",
+        "python3 tools/generate_gpu_preview_sources.py zig-cache/fasttab-generated-src && python3 tools/fix_generated_gpu_source.py zig-cache/fasttab-generated-src",
     });
 
     const exe = b.addExecutable(.{
