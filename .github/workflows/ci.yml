@@ -16,7 +16,24 @@ concurrency:
 
 env:
   APT_PACKAGES: >-
+    build-essential
+    curl
+    tar
+    xz-utils
+    file
+    git
+    wget
+    patchelf
+    binutils
     desktop-file-utils
+    librsvg2-bin
+    zsync
+    zstd
+    rpm
+    dpkg-dev
+    strace
+    dbus-x11
+    libfuse2t64
     libasound2-dev
     libgl1-mesa-dev
     libglu1-mesa-dev
@@ -35,12 +52,82 @@ env:
     libxinerama-dev
     libxkbcommon-dev
     libxrandr-dev
-    libglfw3-dev
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate source metadata and scripts
+        run: |
+          set -euxo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          [[ "$VERSION" == "2.0.0" ]]
+          python -m py_compile .github/scripts/*.py
+          python -c "import xml.etree.ElementTree as ET; ET.parse('packaging/fasttab.svg')"
+          bash -n setup.sh build_appimage.sh build_packages.sh
+          grep -Fq 'X-AppImage-Version=2.0.0' packaging/fasttab.desktop
+          grep -Fq 'const FASTTAB_VERSION = "2.0.0";' src/main.zig
+          grep -Fq 'fn stdoutPrint' src/main.zig
+          grep -Fq 'fn grabWinIsoLeftTab' src/main.zig
+          grep -Fq 'XK_ISO_Left_Tab' src/main.zig
+          grep -Fq 'README.zh-CN.md' README.md
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y $APT_PACKAGES
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+
+      - name: Validate desktop metadata
+        run: desktop-file-validate packaging/fasttab.desktop
+
+      - name: Download and build dependencies
+        run: ./setup.sh
+
+      - name: Run tests
+        run: zig build test
+
+      - name: Build ReleaseSafe binary
+        run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
+
+      - name: Validate CLI streams
+        run: |
+          test -x zig-out/bin/fasttab
+          zig-out/bin/fasttab --help >help.out 2>help.err
+          grep -Fq 'FastTab 2.0.0' help.out
+          test ! -s help.err
+          zig-out/bin/fasttab --version >version.out 2>version.err
+          grep -Fxq 'FastTab 2.0.0' version.out
+          test ! -s version.err
+          set +e
+          zig-out/bin/fasttab --invalid >invalid.out 2>invalid.err
+          status=$?
+          set -e
+          test "$status" -eq 2
+          test ! -s invalid.out
+          grep -Fq 'Error: unknown argument: --invalid' invalid.err
+
+  packages:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            appimage_arch: x86_64
+            deb_arch: amd64
+            rpm_arch: x86_64
+          - runner: ubuntu-24.04-arm
+            appimage_arch: aarch64
+            deb_arch: arm64
+            rpm_arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
 
@@ -52,113 +139,91 @@ jobs:
         with:
           version: 0.14.0
 
-      - name: Validate release, routing, and packaging files
+      - name: Install quick-sharun
+        run: |
+          sudo curl --fail --location --retry 3 \
+            https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/refs/heads/main/useful-tools/quick-sharun.sh \
+            --output /usr/local/bin/quick-sharun
+          sudo chmod +x /usr/local/bin/quick-sharun
+
+      - name: Build DEB
+        run: |
+          FASTTAB_SKIP_RPM=1 bash ./build_packages.sh --native-only
+          mkdir -p deb-dist
+          cp -a dist/. deb-dist/
+
+      - name: Build RPM
+        run: |
+          FASTTAB_SKIP_DEB=1 bash ./build_packages.sh --native-only
+          mkdir -p rpm-dist
+          cp -a dist/. rpm-dist/
+
+      - name: Build AppImage
+        run: |
+          bash ./build_packages.sh --appimage-only
+          cp -a deb-dist/. dist/
+          cp -a rpm-dist/. dist/
+
+      - name: Validate release files and icon hierarchy
+        env:
+          APPIMAGE_ARCH: ${{ matrix.appimage_arch }}
+          DEB_ARCH: ${{ matrix.deb_arch }}
+          RPM_ARCH: ${{ matrix.rpm_arch }}
         run: |
           VERSION="$(tr -d '[:space:]' < VERSION)"
-          python -m py_compile .github/scripts/*.py
-          python -c "import xml.etree.ElementTree as ET; ET.parse('packaging/fasttab.svg')"
-          bash -n build_appimage.sh
-          desktop-file-validate packaging/fasttab.desktop
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          grep -Fq 'Exec=fasttab daemon' packaging/fasttab.desktop
-          grep -Fq "X-AppImage-Version=${VERSION}" packaging/fasttab.desktop
-          grep -Fq 'fn routeIdleTab' src/main.zig
-          grep -Fq '.current_workspace => handleWinTabIncludingSingle' src/main.zig
-          grep -Fq 'fn shouldStartSingleWindowFallback' src/main.zig
-          grep -Fq 'Win+Tab single-window current-workspace switching started' src/main.zig
-          grep -Fq 'const InstanceLock = struct' src/main.zig
-          grep -Fq 'c.flock(file.handle, c.LOCK_EX | c.LOCK_NB)' src/main.zig
-          grep -Fq 'Error: an instance of FastTab is already running.' src/main.zig
-          grep -Fq 'const FASTTAB_VERSION = "' src/main.zig
-          grep -Fq 'fn printHelp() void' src/main.zig
-          grep -Fq '"--help"' src/main.zig
-          grep -Fq '"--version"' src/main.zig
-          grep -Fq "const FASTTAB_VERSION = \"${VERSION}\";" src/main.zig
-          grep -Fq -- "--appimage-addenvs 'REUSE_CHECK_DELAY=0'" build_appimage.sh
-          grep -Fq 'zsyncmake -u "$OUTNAME" -o "$APPIMAGE.zsync" "$APPIMAGE"' build_appimage.sh
-          if grep -Fq 'const is_super =' src/main.zig; then
-            echo "Idle Win+Tab routing must not depend on the delivered MOD4 bit." >&2
-            exit 1
-          fi
+          APPIMAGE="dist/FastTab-${VERSION}-${APPIMAGE_ARCH}.AppImage"
+          DEB="dist/fasttab_${VERSION}_${DEB_ARCH}.deb"
+          RPM="dist/fasttab-${VERSION}-1.${RPM_ARCH}.rpm"
 
-      - name: Download dependencies
-        run: ./setup.sh
-
-      - name: Run tests
-        run: zig build test
-
-      - name: Build ReleaseSafe binary
-        run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
-
-      - name: Validate binary
-        run: test -x zig-out/bin/fasttab
-
-  appimage:
-    needs: test
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    container: ghcr.io/pkgforge-dev/archlinux:latest
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Pre-install Git
-        run: pacman -Sy --noconfirm git
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Prepare AnyLinux environment
-        uses: pkgforge-dev/anylinux-setup-action@8872fabe63f9a00b35e25b2f46da62a05afc9a7d
-
-      - name: Setup Yay for root execution
-        run: |
-          useradd -m -G wheel builduser || true
-          echo "builduser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-          su - builduser -c "git clone https://aur.archlinux.org/yay-bin.git /tmp/yay-bin && cd /tmp/yay-bin && makepkg -si --noconfirm"
-          printf '%s\n' '#!/usr/bin/env bash' 'exec sudo -HE -u builduser /usr/bin/yay "$@"' > /usr/local/bin/yay
-          chmod +x /usr/local/bin/yay
-
-      - name: Build FastTab AppImage
-        run: |
-          chmod +x build_appimage.sh setup.sh
-          ./build_appimage.sh
-
-      - name: Validate AppImage contents
-        run: |
-          VERSION="$(tr -d '[:space:]' < VERSION)"
-          APPIMAGE="dist/FastTab-${VERSION}-x86_64.AppImage"
           test -s "$APPIMAGE"
-          file "$APPIMAGE"
-          test -e AppDir/AppRun
-          test -x AppDir/shared/bin/fasttab
-          test -x AppDir/AppRun.sh
-          find AppDir -name '*.desktop' -print -quit | grep -q .
-          find AppDir \( -iname 'fasttab.svg' -o -iname 'fasttab.png' \) -print -quit | grep -q .
-          grep -Rqs '^Exec=fasttab daemon$' AppDir
-          grep -Fq 'set -- daemon "$@"' AppDir/AppRun.sh
-          "$APPIMAGE" --appimage-envs | grep -Fxq 'REUSE_CHECK_DELAY=0'
-          grep -Eq "^Filename: FastTab-${VERSION}-x86_64\.AppImage$" "$APPIMAGE.zsync"
-          grep -Eq "^URL: FastTab-${VERSION}-x86_64\.AppImage$" "$APPIMAGE.zsync"
+          test -s "$APPIMAGE.zsync"
+          test -s "$APPIMAGE.sha256"
+          test -s "$DEB"
+          test -s "$DEB.sha256"
+          test -s "$RPM"
+          test -s "$RPM.sha256"
+
+          for size in 16 32 64 128 256; do
+            test -s "AppDir/usr/share/icons/hicolor/${size}x${size}/apps/fasttab.png"
+          done
+          test -s AppDir/usr/share/icons/hicolor/scalable/apps/fasttab.svg
+          test -s AppDir/usr/share/pixmaps/fasttab.png
+
+          dpkg-deb --field "$DEB" Package Version Architecture
+          dpkg-deb --contents "$DEB" | grep -Fq './usr/share/icons/hicolor/256x256/apps/fasttab.png'
+          dpkg-deb --contents "$DEB" | grep -Fq './usr/share/icons/hicolor/scalable/apps/fasttab.svg'
+          dpkg-deb --contents "$DEB" | grep -Fq './usr/share/pixmaps/fasttab.png'
+
+          rpm -qp "$RPM"
+          rpm -qlp "$RPM" | grep -Fxq '/usr/share/icons/hicolor/256x256/apps/fasttab.png'
+          rpm -qlp "$RPM" | grep -Fxq '/usr/share/icons/hicolor/scalable/apps/fasttab.svg'
+          rpm -qlp "$RPM" | grep -Fxq '/usr/share/pixmaps/fasttab.png'
+
           (
             cd dist
-            sha256sum -c "FastTab-${VERSION}-x86_64.AppImage.sha256"
-            sha256sum -c fasttab-x86_64.sha256
+            sha256sum -c "$(basename "$APPIMAGE.sha256")"
+            sha256sum -c "$(basename "$DEB.sha256")"
+            sha256sum -c "$(basename "$RPM.sha256")"
           )
+
+          if find dist -maxdepth 1 -type f -name 'fasttab-*' ! -name '*.rpm' ! -name '*.rpm.sha256' | grep -q .; then
+            echo 'Unexpected standalone binary artifact found.' >&2
+            exit 1
+          fi
 
       - name: Upload release files
         uses: actions/upload-artifact@v4
         with:
-          name: fasttab-release-files
+          name: fasttab-${{ matrix.appimage_arch }}-release-files
           path: dist/*
           if-no-files-found: error
           retention-days: 7
 
   release:
-    needs: [test, appimage]
+    needs: [test, packages]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -170,8 +235,8 @@ jobs:
         id: version
         run: |
           VERSION="$(tr -d '[:space:]' < VERSION)"
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid VERSION: $VERSION" >&2
+          if [[ "$VERSION" != "2.0.0" ]]; then
+            echo "Expected formal release version 2.0.0, found: $VERSION" >&2
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -186,40 +251,66 @@ jobs:
         if: steps.version.outputs.publish == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: fasttab-release-files
+          pattern: fasttab-*-release-files
           path: dist
+          merge-multiple: true
+
+      - name: Validate complete release set
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          for arch in x86_64 aarch64; do
+            test -s "dist/FastTab-${VERSION}-${arch}.AppImage"
+            test -s "dist/FastTab-${VERSION}-${arch}.AppImage.zsync"
+            test -s "dist/FastTab-${VERSION}-${arch}.AppImage.sha256"
+          done
+          for arch in amd64 arm64; do
+            test -s "dist/fasttab_${VERSION}_${arch}.deb"
+            test -s "dist/fasttab_${VERSION}_${arch}.deb.sha256"
+          done
+          for arch in x86_64 aarch64; do
+            test -s "dist/fasttab-${VERSION}-1.${arch}.rpm"
+            test -s "dist/fasttab-${VERSION}-1.${arch}.rpm.sha256"
+          done
+          if find dist -maxdepth 1 -type f -name 'fasttab-*' ! -name '*.rpm' ! -name '*.rpm.sha256' | grep -q .; then
+            echo 'Standalone binary artifacts are not allowed in the 2.0.0 release.' >&2
+            exit 1
+          fi
 
       - name: Write release notes
         if: steps.version.outputs.publish == 'true'
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          {
-            echo "FastTab ${VERSION} adds complete command-line help and version options."
-            echo
-            echo "FastTab now supports help/-h/--help and version/-v/-V/--version, keeps daemon as the default command, and reports unknown arguments with a clear help hint."
-            echo
-            echo "Included downloads:"
-            echo
-            printf -- '- `FastTab-%s-x86_64.AppImage`: portable x86_64 build packaged with quick-sharun.\n' "$VERSION"
-            printf -- '- `FastTab-%s-x86_64.AppImage.zsync`: binary update metadata.\n' "$VERSION"
-            echo '- `fasttab-x86_64`: standalone ReleaseSafe binary.'
-            echo '- SHA-256 checksum files for the AppImage and standalone binary.'
-            echo
-            echo "Shortcuts:"
-            echo
-            echo '- `Alt+Tab`: switch across all tracked windows.'
-            echo '- `Win+Tab`: display windows on the current workspace, including a single window.'
-            echo '- Add `Shift` for reverse navigation.'
-            echo
-            echo "FastTab requires X11 and hardware-accelerated OpenGL."
-          } > RELEASE_NOTES.md
+          cat > RELEASE_NOTES.md <<'NOTES'
+          FastTab 2.0.0 is the first formal multi-architecture release.
 
-      - name: Publish FastTab release
+          Highlights:
+
+          - Correct CLI stream behavior: help and version use standard output; errors use standard error.
+          - Complete Win+Shift+Tab support, including keyboard layouts that emit a distinct ISO_Left_Tab keycode.
+          - Native x86_64 and ARM64/AArch64 builds.
+          - AppImage, DEB, and RPM packages for both architectures.
+          - Complete hicolor icon hierarchy at 16, 32, 64, 128, and 256 pixels, scalable SVG, and `/usr/share/pixmaps/fasttab.png`.
+          - English and Simplified Chinese documentation.
+
+          Release files:
+
+          - `FastTab-2.0.0-x86_64.AppImage`
+          - `FastTab-2.0.0-aarch64.AppImage`
+          - `fasttab_2.0.0_amd64.deb`
+          - `fasttab_2.0.0_arm64.deb`
+          - `fasttab-2.0.0-1.x86_64.rpm`
+          - `fasttab-2.0.0-1.aarch64.rpm`
+          - SHA-256 checksum files and AppImage zsync metadata
+
+          FastTab requires Linux, X11, and hardware-accelerated OpenGL.
+          NOTES
+
+      - name: Publish FastTab 2.0.0
         if: steps.version.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: FastTab ${{ steps.version.outputs.version }}
+          tag_name: 2.0.0
+          name: FastTab 2.0.0
           body_path: RELEASE_NOTES.md
           files: dist/*
           draft: false

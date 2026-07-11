@@ -1,5 +1,10 @@
 .zig-cache
 zig-out
 lib/
-CLAUDE.md
 include/
+AppDir/
+dist/
+package-root/
+deb-root/
+rpmbuild/
+CLAUDE.md

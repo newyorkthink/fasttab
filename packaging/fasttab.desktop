@@ -1,13 +1,18 @@
 [Desktop Entry]
 Type=Application
 Name=FastTab
+Name[zh_CN]=FastTab 窗口切换器
 GenericName=Window Switcher
+GenericName[zh_CN]=窗口切换器
 Comment=Fast GPU-accelerated X11 window switcher
+Comment[zh_CN]=快速的 GPU 加速 X11 窗口切换器
 Exec=fasttab daemon
+TryExec=fasttab
 Icon=fasttab
 Terminal=false
 Categories=Utility;System;
-Keywords=window;switcher;alt-tab;x11;i3;
+Keywords=window;switcher;alt-tab;win-tab;x11;i3;
+Keywords[zh_CN]=窗口;切换器;X11;i3;
 StartupNotify=false
 StartupWMClass=FastTab
-X-AppImage-Version=1.0.8
+X-AppImage-Version=2.0.0

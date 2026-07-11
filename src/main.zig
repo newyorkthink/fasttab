@@ -11,7 +11,13 @@ const c = @cImport({
 
 const log = std.log.scoped(.fasttab);
 const SHOW_DELAY_FRAMES: u8 = 1;
-const FASTTAB_VERSION = "1.0.8";
+const FASTTAB_VERSION = "2.0.0";
+const LOCK_VARIANTS = [_]u16{
+    0,
+    x11.MOD_LOCK,
+    x11.MOD_MOD2,
+    x11.MOD_LOCK | x11.MOD_MOD2,
+};
 
 const IdleTabRoute = enum {
     all_windows,
@@ -30,8 +36,18 @@ fn shouldStartSingleWindowFallback(window_count: usize) bool {
     return window_count == 1;
 }
 
+fn winTabModifiers(lock_mask: u16, reverse: bool) u16 {
+    return x11.MOD_SUPER | lock_mask | if (reverse) x11.MOD_SHIFT else 0;
+}
+
+fn stdoutPrint(comptime format: []const u8, args: anytype) void {
+    var buffer: [4096]u8 = undefined;
+    const output = std.fmt.bufPrint(&buffer, format, args) catch return;
+    _ = c.write(c.STDOUT_FILENO, output.ptr, output.len);
+}
+
 fn printHelp() void {
-    std.debug.print(
+    stdoutPrint(
         "FastTab {s}\n" ++
             "Fast GPU-accelerated X11 window switcher.\n\n" ++
             "Usage:\n" ++
@@ -49,13 +65,13 @@ fn printHelp() void {
 }
 
 fn printVersion() void {
-    std.debug.print("FastTab {s}\n", .{FASTTAB_VERSION});
+    stdoutPrint("FastTab {s}\n", .{FASTTAB_VERSION});
 }
 
 pub fn main() !void {
     installFastSignalExit();
     var args_iter = std.process.args();
-    _ = args_iter.next(); // skip program name
+    _ = args_iter.next();
 
     while (args_iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "daemon") or std.mem.eql(u8, arg, "--daemon")) continue;
@@ -134,7 +150,65 @@ const InstanceLock = struct {
     }
 };
 
-/// Run the daemon with XCB key grabbing
+fn grabWinIsoLeftTab(conn: *x11.xcb.xcb_connection_t, root: x11.xcb.xcb_window_t) void {
+    const key_symbols = x11.xcb.xcb_key_symbols_alloc(conn);
+    if (key_symbols == null) {
+        log.err("Failed to allocate key symbols for Win+ISO_Left_Tab grab", .{});
+        return;
+    }
+    defer x11.xcb.xcb_key_symbols_free(key_symbols);
+
+    const keycodes = x11.xcb.xcb_key_symbols_get_keycode(key_symbols, x11.XK_ISO_Left_Tab);
+    if (keycodes) |codes| {
+        defer std.c.free(codes);
+        var i: usize = 0;
+        while (codes[i] != 0) : (i += 1) {
+            for (LOCK_VARIANTS) |lock_mask| {
+                _ = x11.xcb.xcb_grab_key(
+                    conn,
+                    1,
+                    root,
+                    winTabModifiers(lock_mask, false),
+                    codes[i],
+                    x11.xcb.XCB_GRAB_MODE_ASYNC,
+                    x11.xcb.XCB_GRAB_MODE_ASYNC,
+                );
+                _ = x11.xcb.xcb_grab_key(
+                    conn,
+                    1,
+                    root,
+                    winTabModifiers(lock_mask, true),
+                    codes[i],
+                    x11.xcb.XCB_GRAB_MODE_ASYNC,
+                    x11.xcb.XCB_GRAB_MODE_ASYNC,
+                );
+            }
+        }
+    }
+
+    _ = x11.xcb.xcb_flush(conn);
+}
+
+fn ungrabWinIsoLeftTab(conn: *x11.xcb.xcb_connection_t, root: x11.xcb.xcb_window_t) void {
+    const key_symbols = x11.xcb.xcb_key_symbols_alloc(conn);
+    if (key_symbols == null) return;
+    defer x11.xcb.xcb_key_symbols_free(key_symbols);
+
+    const keycodes = x11.xcb.xcb_key_symbols_get_keycode(key_symbols, x11.XK_ISO_Left_Tab);
+    if (keycodes) |codes| {
+        defer std.c.free(codes);
+        var i: usize = 0;
+        while (codes[i] != 0) : (i += 1) {
+            for (LOCK_VARIANTS) |lock_mask| {
+                _ = x11.xcb.xcb_ungrab_key(conn, codes[i], root, winTabModifiers(lock_mask, false));
+                _ = x11.xcb.xcb_ungrab_key(conn, codes[i], root, winTabModifiers(lock_mask, true));
+            }
+        }
+    }
+
+    _ = x11.xcb.xcb_flush(conn);
+}
+
 fn runDaemon() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -143,18 +217,19 @@ fn runDaemon() !void {
     var conn = try x11.Connection.init();
     defer conn.deinit();
 
-    // Register for PropertyNotify events on root window
     const event_mask = [_]u32{x11.xcb.XCB_EVENT_MASK_PROPERTY_CHANGE};
     _ = x11.xcb.xcb_change_window_attributes(conn.conn, conn.root, x11.xcb.XCB_CW_EVENT_MASK, &event_mask);
     conn.flush();
 
-    // Grab Alt+Tab passively
     x11.grabAltTab(conn.conn, conn.root);
     defer x11.ungrabAltTab(conn.conn, conn.root);
 
-    // Grab Win+Tab passively
     x11.grabWinTab(conn.conn, conn.root);
-    defer x11.ungrabWinTab(conn.conn, conn.root);
+    grabWinIsoLeftTab(conn.conn, conn.root);
+    defer {
+        ungrabWinIsoLeftTab(conn.conn, conn.root);
+        x11.ungrabWinTab(conn.conn, conn.root);
+    }
 
     var task_queue = worker.TaskQueue.init(allocator);
 
@@ -171,26 +246,19 @@ fn runDaemon() !void {
         return;
     }
 
-    // Initialize app in daemon mode (window created but hidden)
-    // App init drains the queue for initial windows
     var application = try app.App.init(allocator, &task_queue, true, &conn);
     defer application.deinit();
     application.hideWindow();
 
     log.debug("Daemon ready: {d} windows tracked", .{application.windowCount()});
 
-    // Main loop: poll on XCB file descriptor
     const xcb_fd = x11.getXcbFd(conn.conn);
     var pollfds = [_]std.posix.pollfd{
         .{ .fd = xcb_fd, .events = std.posix.POLL.IN, .revents = 0 },
     };
     while (application.isRunning()) {
-        // Poll for XCB events (16ms timeout ~= 60fps)
         _ = std.posix.poll(&pollfds, 16) catch {};
-
-        // Always drain XCB events
         processXcbEvents(&application, &conn);
-
         application.drainUpdateQueue();
         application.update();
     }
@@ -202,7 +270,6 @@ fn runDaemon() !void {
     log.debug("Daemon stopped", .{});
 }
 
-/// Process all pending XCB events (key press/release, damage)
 fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
     while (true) {
         const event = x11.xcb.xcb_poll_for_event(conn.conn);
@@ -217,11 +284,8 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
                 const base_keysym = x11.keycodeToKeysym(conn, key_event.detail, 0);
                 const shifted_keysym = x11.keycodeToKeysym(conn, key_event.detail, 1);
                 const state_mask = key_event.state;
-
                 const is_shift = (state_mask & x11.MOD_SHIFT) != 0;
 
-                // Some X layouts report Shift+Tab as ISO_Left_Tab, others keep the
-                // same Tab keycode and only set the Shift modifier. Treat both as Tab.
                 const is_tab_key = base_keysym == x11.XK_Tab or
                     base_keysym == x11.XK_ISO_Left_Tab or
                     shifted_keysym == x11.XK_Tab or
@@ -236,7 +300,6 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
                         }
                     }
                 } else {
-                    // Switching: normalize Tab keycodes so Shift+Tab always means previous.
                     var effective_keysym = base_keysym;
                     if (is_tab_key) {
                         effective_keysym = if (reverse)
@@ -250,7 +313,6 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
             x11.xcb.XCB_KEY_RELEASE => {
                 const key_event: *x11.xcb.xcb_key_release_event_t = @ptrCast(event);
                 const keysym = x11.keycodeToKeysym(conn, key_event.detail, 0);
-
                 _ = application.handleKeyEvent(keysym, false);
             },
             x11.xcb.XCB_PROPERTY_NOTIFY => {
@@ -260,7 +322,6 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
                 }
             },
             else => {
-                // Check for damage events
                 if (response_type == conn.damage_event_base + x11.xcb.XCB_DAMAGE_NOTIFY) {
                     const damage_event: *x11.xcb.xcb_damage_notify_event_t = @ptrCast(event);
                     application.handleDamageEvent(damage_event.drawable);
@@ -270,9 +331,6 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
     }
 }
 
-/// app.handleWinTab intentionally returns without showing when the filtered list has one item.
-/// Preserve its normal multi-window behavior, then start the same current-workspace mode for the
-/// single-window case so Win+Tab remains visually consistent on every non-empty workspace.
 fn handleWinTabIncludingSingle(application: *app.App, conn: *x11.Connection, shift: bool) void {
     application.handleWinTab(shift);
     if (application.state != .idle) return;
@@ -322,7 +380,6 @@ test "idle Alt+Tab routes to all windows" {
 test "idle grabbed Tab without Alt routes to current workspace" {
     try std.testing.expectEqual(IdleTabRoute.current_workspace, routeIdleTab(x11.MOD_SUPER));
     try std.testing.expectEqual(IdleTabRoute.current_workspace, routeIdleTab(x11.MOD_SUPER | x11.MOD_SHIFT));
-    // Regression: some X11 setups omit MOD4 from the delivered Win+Tab state.
     try std.testing.expectEqual(IdleTabRoute.current_workspace, routeIdleTab(0));
 }
 
@@ -334,4 +391,10 @@ test "single current-workspace window starts the visual fallback" {
     try std.testing.expect(!shouldStartSingleWindowFallback(0));
     try std.testing.expect(shouldStartSingleWindowFallback(1));
     try std.testing.expect(!shouldStartSingleWindowFallback(2));
+}
+
+test "Win ISO Left Tab uses Super and reverse Shift modifiers" {
+    try std.testing.expectEqual(x11.MOD_SUPER, winTabModifiers(0, false));
+    try std.testing.expectEqual(x11.MOD_SUPER | x11.MOD_SHIFT, winTabModifiers(0, true));
+    try std.testing.expectEqual(x11.MOD_SUPER | x11.MOD_SHIFT | x11.MOD_LOCK, winTabModifiers(x11.MOD_LOCK, true));
 }
