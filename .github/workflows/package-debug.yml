@@ -1,0 +1,53 @@
+name: Package Debug
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deb-debug:
+    if: github.event.pull_request.number == 13
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential curl tar xz-utils desktop-file-utils librsvg2-bin \
+            rpm dpkg-dev libasound2-dev libgl1-mesa-dev libglu1-mesa-dev \
+            libwayland-dev libx11-dev libx11-xcb-dev libxcb-composite0-dev \
+            libxcb-damage0-dev libxcb-image0-dev libxcb-keysyms1-dev \
+            libxcb-shm0-dev libxcb-util0-dev libxcb1-dev libxcursor-dev \
+            libxi-dev libxinerama-dev libxkbcommon-dev libxrandr-dev
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+
+      - name: Capture DEB build log
+        id: build
+        run: |
+          set +e
+          FASTTAB_SKIP_RPM=1 ./build_packages.sh --native-only >deb-build.log 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          tail -n 120 deb-build.log
+          exit 0
+
+      - name: Upload DEB diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: fasttab-deb-debug
+          path: deb-build.log
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Preserve failure status
+        run: test "${{ steps.build.outputs.status }}" -eq 0
