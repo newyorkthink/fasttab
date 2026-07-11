@@ -1,0 +1,32 @@
+name: Apply FastTab 2.0.2 preview fix
+
+on:
+  push:
+    branches:
+      - agent/fix-cross-workspace-preview-2.0.2
+    paths:
+      - .github/workflows/apply-cross-workspace-preview-2.0.2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-cross-workspace-preview-2.0.2
+          fetch-depth: 0
+
+      - name: Apply source and release changes
+        run: python .github/scripts/apply_cross_workspace_preview_2_0_2.py
+
+      - name: Commit completed fix
+        run: |
+          git diff --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Fix i3 cross-workspace preview persistence"
+          git push origin HEAD:agent/fix-cross-workspace-preview-2.0.2
