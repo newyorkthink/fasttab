@@ -31,3 +31,5 @@ jobs:
           git add -A
           git commit -m 'Fix GPU-backed black previews'
           git push origin HEAD:agent/fix-gpu-black-previews-2.0.4
+
+# Trigger after workflow registration.
