@@ -65,7 +65,7 @@ jobs:
           set -euxo pipefail
           VERSION="$(tr -d '[:space:]' < VERSION)"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [[ "$VERSION" == "2.0.1" ]]
+          [[ "$VERSION" == "2.0.2" ]]
           python -m py_compile .github/scripts/*.py
           python -c "import xml.etree.ElementTree as ET; ET.parse('packaging/fasttab.svg')"
           bash -n setup.sh build_appimage.sh build_packages.sh
@@ -74,6 +74,8 @@ jobs:
           grep -Fq "const FASTTAB_VERSION = \"$VERSION\";" src/main.zig
           grep -Fq 'pub fn sanitizeDisplayText' src/text_sanitize.zig
           grep -Fq 'fn processSnapshotQueue' src/app.zig
+          grep -Fq 'switch_origin_snapshot_ready' src/app.zig
+          grep -Fq 'fn cacheSnapshotForWindow' src/app.zig
           grep -Fq 'fn refreshViewableThumbnailsForShow' src/app.zig
           grep -Fq 'preserving cached preview and retrying later' src/app.zig
           grep -Fq 'README.zh-CN.md' README.md
@@ -288,15 +290,14 @@ jobs:
         if: steps.version.outputs.publish == 'true'
         run: |
           cat > RELEASE_NOTES.md <<'NOTES'
-          FastTab 2.0.1 is a stability release focused on preview persistence and switcher latency.
+          FastTab 2.0.2 fixes cross-workspace preview loss under i3.
 
           Highlights:
 
-          - Preserves Firefox, Vivaldi, and other browser previews across repeated Alt+Tab and Win+Tab sessions.
-          - Keeps the previous cached preview when a transient GLX refresh or reacquire operation fails.
-          - No longer removes a tracked window because of a temporary GLX error.
-          - Generates fallback snapshots incrementally after the switcher is hidden, eliminating the pause when Alt or Super is released.
-          - Replaces unsupported Nerd Font and Powerline private-use title glyphs with a plain separator instead of `?`.
+          - Captures the real active window once before i3 unmaps it during a workspace switch.
+          - Preserves Firefox, Code Desktop, Antigravity, Vivaldi, and other previews across repeated Alt+Tab and Win+Tab sessions.
+          - Saves the last valid texture before GLX invalidation and retries transient failures without deleting the cached preview.
+          - Keeps exit latency low: only the origin window is captured synchronously; remaining snapshots stay incremental.
           - Retains x86_64 and ARM64/AArch64 AppImage, DEB, and RPM packages.
 
           FastTab requires Linux, X11, and hardware-accelerated OpenGL.
