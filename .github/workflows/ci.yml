@@ -146,8 +146,16 @@ jobs:
             --output /usr/local/bin/quick-sharun
           sudo chmod +x /usr/local/bin/quick-sharun
 
-      - name: Build AppImage, DEB, and RPM
-        run: ./build_packages.sh
+      - name: Build DEB and RPM
+        run: |
+          ./build_packages.sh --native-only
+          mkdir -p native-dist
+          cp -a dist/. native-dist/
+
+      - name: Build AppImage
+        run: |
+          ./build_packages.sh --appimage-only
+          cp -a native-dist/. dist/
 
       - name: Validate release files and icon hierarchy
         env:
