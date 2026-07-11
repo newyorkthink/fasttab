@@ -22,6 +22,7 @@ jobs:
           git show a8980c58d60928c6ca19a668aca02dbe9572c12d:.github/workflows/ci.yml > .github/workflows/ci.yml
           python .github/scripts/apply_gpu_black_preview_fix_2_0_4.py
           rm -f .github/scripts/apply_gpu_black_preview_fix_2_0_4.py
+          rm -f .github/trigger-gpu-black-preview-fix
 
       - name: Commit generated fix
         run: |
