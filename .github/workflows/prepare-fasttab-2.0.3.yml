@@ -98,3 +98,5 @@ jobs:
           git add VERSION src/main.zig packaging/fasttab.desktop README.md README.zh-CN.md build_packages.sh .github/workflows/ci.yml
           git commit -m 'Prepare FastTab 2.0.3 release'
           git push origin HEAD:main
+
+# Registered on main; this commit triggers the one-shot release update.
