@@ -1,4 +1,4 @@
-name: CI/CD
+name: 持续集成与发布
 
 on:
   workflow_dispatch:
@@ -55,12 +55,14 @@ env:
 
 jobs:
   test:
+    name: 测试
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - name: 检出源码
+        uses: actions/checkout@v4
 
-      - name: Validate source and metadata
+      - name: 核对源码与元数据
         run: |
           set -euxo pipefail
           VERSION="$(tr -d '[:space:]' < VERSION)"
@@ -81,31 +83,31 @@ jobs:
           ! grep -Fq 'microsoft-edge' src/app.zig src/x11.zig build.zig
           ! grep -Fq 'remmina' src/app.zig src/x11.zig build.zig
           ! grep -Fq 'uploadWindowFromRoot' src/app.zig src/x11.zig build.zig
-          grep -Fq 'README.zh-CN.md' README.md
+          grep -Fq 'FastTab 是一款面向 X11 的高性能窗口切换器' README.md
           grep -Fq 'License:        GPL-3.0-only' build_packages.sh
           grep -Fq '/usr/share/doc/fasttab/LICENSE.md' build_packages.sh
 
-      - name: Install system dependencies
+      - name: 安装系统依赖
         run: sudo apt-get update && sudo apt-get install -y $APT_PACKAGES
 
-      - name: Setup Zig
+      - name: 配置 Zig
         uses: mlugg/setup-zig@v2
         with:
           version: 0.14.0
 
-      - name: Validate desktop metadata
+      - name: 核对桌面文件元数据
         run: desktop-file-validate packaging/fasttab.desktop
 
-      - name: Download and build dependencies
+      - name: 下载并构建依赖
         run: ./setup.sh
 
-      - name: Run tests
+      - name: 运行测试
         run: zig build test
 
-      - name: Build ReleaseSafe binary
+      - name: 构建 ReleaseSafe 二进制文件
         run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
 
-      - name: Validate CLI streams
+      - name: 核对命令行输出流
         run: |
           VERSION="$(tr -d '[:space:]' < VERSION)"
           test -x zig-out/bin/fasttab
@@ -124,6 +126,7 @@ jobs:
           grep -Fq 'Error: unknown argument: --invalid' invalid.err
 
   packages:
+    name: 构建安装包
     needs: test
     strategy:
       fail-fast: false
@@ -140,42 +143,43 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@v4
+      - name: 检出源码
+        uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: 安装系统依赖
         run: sudo apt-get update && sudo apt-get install -y $APT_PACKAGES
 
-      - name: Setup Zig
+      - name: 配置 Zig
         uses: mlugg/setup-zig@v2
         with:
           version: 0.14.0
 
-      - name: Install quick-sharun
+      - name: 安装 quick-sharun
         run: |
           sudo curl --fail --location --retry 3 \
             https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/refs/heads/main/useful-tools/quick-sharun.sh \
             --output /usr/local/bin/quick-sharun
           sudo chmod +x /usr/local/bin/quick-sharun
 
-      - name: Build DEB
+      - name: 构建 DEB
         run: |
           FASTTAB_SKIP_RPM=1 bash ./build_packages.sh --native-only
           mkdir -p deb-dist
           cp -a dist/. deb-dist/
 
-      - name: Build RPM
+      - name: 构建 RPM
         run: |
           FASTTAB_SKIP_DEB=1 bash ./build_packages.sh --native-only
           mkdir -p rpm-dist
           cp -a dist/. rpm-dist/
 
-      - name: Build AppImage
+      - name: 构建 AppImage
         run: |
           bash ./build_packages.sh --appimage-only
           cp -a deb-dist/. dist/
           cp -a rpm-dist/. dist/
 
-      - name: Validate release files
+      - name: 核对发布文件
         env:
           APPIMAGE_ARCH: ${{ matrix.appimage_arch }}
           DEB_ARCH: ${{ matrix.deb_arch }}
@@ -212,7 +216,7 @@ jobs:
             sha256sum -c "$(basename "$RPM.sha256")"
           )
 
-      - name: Upload release files
+      - name: 上传发布文件
         uses: actions/upload-artifact@v4
         with:
           name: fasttab-${{ matrix.appimage_arch }}-release-files
@@ -221,18 +225,21 @@ jobs:
           retention-days: 7
 
   release:
+    name: 发布并清理历史记录
     needs: [test, packages]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
+      actions: write
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: 检出源码
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Resolve release version
+      - name: 解析发布版本
         id: version
         run: |
           VERSION="$(tr -d '[:space:]' < VERSION)"
@@ -244,7 +251,7 @@ jobs:
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Download release files
+      - name: 下载发布文件
         if: steps.version.outputs.publish == 'true'
         uses: actions/download-artifact@v4
         with:
@@ -252,7 +259,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Validate complete release set
+      - name: 核对完整发布文件集
         if: steps.version.outputs.publish == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
@@ -270,28 +277,27 @@ jobs:
             test -s "dist/fasttab-${VERSION}-1.${arch}.rpm.sha256"
           done
 
-      - name: Write release notes
-        if: steps.version.outputs.publish == 'true'
+      - name: 写入中文发布说明
         run: |
           cat > RELEASE_NOTES.md <<'NOTES'
-          FastTab 2.0.7 fixes intermittent transparent Firefox previews while retaining the generic live-preview lifecycle and workspace layout correction.
+          FastTab 2.0.7 修复窗口预览偶发透明问题，同时保留通用实时预览机制和工作区布局修正。
 
-          Highlights:
+          主要更新：
 
-          - Treats every X11 window preview as opaque when a client supplies valid RGB with zero or undefined pixmap alpha.
-          - Keeps the correction generic in the shared downsample shader without application-name checks.
-          - Sizes the switcher to the measured workspace bar so the last workspace remains fully visible.
-          - Keeps a single window card centered when the workspace bar determines the container width.
-          - Removes application-specific Edge, Remmina, and root-framebuffer capture rules.
-          - Releases XComposite/GLX bindings while hidden and reacquires fresh backing pixmaps on show.
-          - Restores one common dynamic preview path for Firefox, Chrome/Chromium, Edge, video, Remmina, and other X11 clients.
-          - Keeps cached snapshots only as cross-workspace and temporarily-unmapped fallbacks.
-          - Retains x86_64 and ARM64/AArch64 AppImage, DEB, and RPM packages.
+          - X11 客户端提供有效 RGB 但 pixmap Alpha 为 0 或未定义时，仍按不透明窗口预览处理。
+          - 修正位于所有应用共用的降采样着色器中，不按应用名称添加专用判断。
+          - 按工作区栏的实际测量宽度调整切换器尺寸，确保最后一个工作区完整显示。
+          - 当前只有一个窗口时保持卡片居中，不受工作区栏宽度影响。
+          - 移除 Edge、Remmina 和 root framebuffer 等按应用区分的捕获规则。
+          - FastTab 隐藏时释放 XComposite/GLX 绑定，再次显示时重新获取最新的 backing pixmap。
+          - Firefox、Chrome/Chromium、Edge、视频、Remmina 及其他 X11 客户端统一使用同一套动态预览路径。
+          - 缓存截图仅用于跨工作区或窗口暂时未映射时的兜底。
+          - 继续提供 x86_64 与 ARM64/AArch64 的 AppImage、DEB 和 RPM 安装包。
 
-          FastTab requires Linux, X11, and hardware-accelerated OpenGL.
+          FastTab 需要 Linux、X11 和支持硬件加速的 OpenGL。
           NOTES
 
-      - name: Publish FastTab release
+      - name: 发布新的正式版本
         if: steps.version.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
@@ -304,3 +310,84 @@ jobs:
           draft: false
           prerelease: false
           make_latest: true
+
+      - name: 更新当前正式版本中文说明
+        if: steps.version.outputs.publish != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release edit "$VERSION" \
+            --title "FastTab $VERSION" \
+            --notes-file RELEASE_NOTES.md \
+            --latest
+
+      - name: 核对当前正式版本
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${VERSION}" > release.json
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          release = json.loads(Path("release.json").read_text(encoding="utf-8"))
+          assert release["tag_name"] == version
+          assert release["draft"] is False
+          assert release["prerelease"] is False
+          assert "主要更新" in release["body"]
+
+          expected = {
+              f"FastTab-{version}-x86_64.AppImage",
+              f"FastTab-{version}-x86_64.AppImage.sha256",
+              f"FastTab-{version}-x86_64.AppImage.zsync",
+              f"FastTab-{version}-aarch64.AppImage",
+              f"FastTab-{version}-aarch64.AppImage.sha256",
+              f"FastTab-{version}-aarch64.AppImage.zsync",
+              f"fasttab_{version}_amd64.deb",
+              f"fasttab_{version}_amd64.deb.sha256",
+              f"fasttab_{version}_arm64.deb",
+              f"fasttab_{version}_arm64.deb.sha256",
+              f"fasttab-{version}-1.x86_64.rpm",
+              f"fasttab-{version}-1.x86_64.rpm.sha256",
+              f"fasttab-{version}-1.aarch64.rpm",
+              f"fasttab-{version}-1.aarch64.rpm.sha256",
+          }
+
+          assets = {asset["name"]: asset for asset in release["assets"]}
+          missing = expected - assets.keys()
+          assert not missing, f"缺少发布文件: {sorted(missing)}"
+          assert all(assets[name]["size"] > 0 for name in expected)
+          assert "fasttab-x86_64" not in assets
+          PY
+
+      - name: 删除旧的 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mapfile -t release_ids < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq ".[] | select(.tag_name != \"${VERSION}\") | .id"
+          )
+
+          for release_id in "${release_ids[@]}"; do
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/${release_id}"
+          done
+
+      - name: 删除已移除工作流的历史运行记录
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mapfile -t run_ids < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100&status=completed" \
+              --jq '.workflow_runs[] | select(.path != ".github/workflows/ci.yml") | .id'
+          )
+
+          for run_id in "${run_ids[@]}"; do
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
+          done
