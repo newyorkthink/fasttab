@@ -368,9 +368,7 @@ pub const App = struct {
                     };
 
                     self.items.append(new_item) catch {
-                        // Free the strings since we failed to append
-                        self.allocator.free(data.title);
-                        self.allocator.free(data.icon_id);
+                        // The task still owns its strings; task.deinit frees them below.
                         if (self.window_textures.fetchRemove(data.window_id)) |entry| {
                             var t = entry.value;
                             t.deinit(self.conn);
@@ -1231,9 +1229,10 @@ pub const App = struct {
     fn nextPendingReacquireWindowId(self: *Self, prefer_selected: bool) ?x11.xcb.xcb_window_t {
         if (self.items.items.len == 0) return null;
 
-        if (prefer_selected and self.selected_index < self.items.items.len) {
-            const index = self.selected_index;
-            const selected = self.items.items[index];
+        const display = self.displayItems();
+        if (prefer_selected and self.selected_index < display.len) {
+            const selected = display[self.selected_index];
+            const index = self.findItemIndexByWindowId(selected.id) orelse return null;
             if (!selected.thumbnail_ready) {
                 if (self.window_textures.getPtr(selected.id)) |tex| {
                     if (!tex.bound) {
@@ -1414,6 +1413,8 @@ pub const App = struct {
     fn syncFilteredItems(self: *Self) void {
         for (self.filtered_items.items) |*fi| {
             const src = self.findItemByWindowId(fi.id) orelse continue;
+            fi.source_width = src.source_width;
+            fi.source_height = src.source_height;
             fi.thumbnail_ready = src.thumbnail_ready;
             fi.thumbnail_texture = src.thumbnail_texture;
             fi.cached_snapshot = src.cached_snapshot; // may be null after reacquire freed it
@@ -1481,6 +1482,10 @@ pub const App = struct {
     }
 
     fn updateLayout(self: *Self) void {
+        // Reacquire and damage handlers update the owning items first.
+        // Layout must see those dimensions before sizing the workspace view.
+        if (self.switch_mode == .current_workspace) self.syncFilteredItems();
+
         const prev_width = self.current_layout.total_width;
         const prev_height = self.current_layout.total_height;
         self.current_layout = ui.calculateBestLayoutForMonitor(
@@ -1550,4 +1555,106 @@ pub fn findMonitorAtPosition(pos: x11.MousePosition) MonitorInfo {
         .width = 1920,
         .height = 1080,
     };
+}
+
+test "workspace layout uses refreshed source dimensions" {
+    var application: App = undefined;
+    application.items = std.ArrayList(DisplayWindow).init(std.testing.allocator);
+    defer application.items.deinit();
+    application.filtered_items = std.ArrayList(DisplayWindow).init(std.testing.allocator);
+    defer application.filtered_items.deinit();
+    application.workspace_names = std.ArrayList([]u8).init(std.testing.allocator);
+    defer application.workspace_names.deinit();
+    application.current_workspace = 1;
+    application.switch_mode = .current_workspace;
+    application.window_hidden = true;
+    application.monitor = .{ .index = 0, .x = 0, .y = 0, .width = 1920, .height = 1080 };
+    application.font = std.mem.zeroes(rl.Font);
+    application.current_layout = std.mem.zeroes(ui.GridLayout);
+
+    var item = std.mem.zeroes(DisplayWindow);
+    item.id = 42;
+    item.workspace = 1;
+    item.source_width = 1920;
+    item.source_height = 1080;
+    try application.items.append(item);
+    application.buildCurrentWorkspaceItems();
+    application.updateLayout();
+    const old_width = application.filtered_items.items[0].display_width;
+
+    // Simulate a portrait resize reported by texture reacquisition.
+    application.items.items[0].source_width = 600;
+    application.items.items[0].source_height = 1200;
+    application.updateLayout();
+    const resized = application.filtered_items.items[0];
+    try std.testing.expectEqual(@as(u32, 600), resized.source_width);
+    try std.testing.expectEqual(@as(u32, 1200), resized.source_height);
+    try std.testing.expectEqual(@as(u32, 100), resized.display_width);
+    try std.testing.expectEqual(@as(u32, 200), resized.display_height);
+    try std.testing.expect(resized.display_width < old_width);
+    try std.testing.expectEqual(resized.display_width + 2 * ui.PADDING, application.current_layout.total_width);
+}
+
+test "workspace reacquisition prioritizes the selected window ID" {
+    var application: App = undefined;
+    application.items = std.ArrayList(DisplayWindow).init(std.testing.allocator);
+    defer application.items.deinit();
+    application.filtered_items = std.ArrayList(DisplayWindow).init(std.testing.allocator);
+    defer application.filtered_items.deinit();
+    application.window_textures = std.AutoHashMap(x11.xcb.xcb_window_t, x11.WindowTexture).init(std.testing.allocator);
+    defer application.window_textures.deinit();
+    application.current_workspace = 1;
+    application.switch_mode = .current_workspace;
+    application.selected_index = 0;
+    application.reacquire_cursor = 0;
+
+    var item = std.mem.zeroes(DisplayWindow);
+    item.id = 10;
+    item.workspace = 2;
+    try application.items.append(item);
+    item.id = 20;
+    item.workspace = 1;
+    try application.items.append(item);
+    application.buildCurrentWorkspaceItems();
+    try std.testing.expectEqual(@as(?u32, 20), application.nextPendingReacquireWindowId(true));
+
+    application.switch_mode = .all_windows;
+    try std.testing.expectEqual(@as(?u32, 10), application.nextPendingReacquireWindowId(true));
+}
+
+test "failed window append leaves task strings owned until cleanup" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var queue = worker.TaskQueue.init(std.testing.allocator);
+    defer queue.deinit();
+    queue.push(.{ .window_added = .{
+        .window_id = 42,
+        .title = try std.testing.allocator.dupe(u8, "test title"),
+        .icon_id = try std.testing.allocator.dupe(u8, "test icon"),
+        .is_minimized = true,
+        .allocator = std.testing.allocator,
+    } });
+
+    var application: App = undefined;
+    application.allocator = std.testing.allocator;
+    application.items = std.ArrayList(DisplayWindow).init(failing.allocator());
+    defer application.items.deinit();
+    application.temp_tasks = std.ArrayList(worker.UpdateTask).init(std.testing.allocator);
+    defer application.temp_tasks.deinit();
+    application.window_textures = std.AutoHashMap(x11.xcb.xcb_window_t, x11.WindowTexture).init(std.testing.allocator);
+    defer application.window_textures.deinit();
+    application.icon_texture_cache = std.StringHashMap(rl.Texture2D).init(std.testing.allocator);
+    defer application.icon_texture_cache.deinit();
+    application.workspace_names = std.ArrayList([]u8).init(std.testing.allocator);
+    defer application.workspace_names.deinit();
+    application.update_queue = &queue;
+    application.switch_mode = .all_windows;
+    application.window_hidden = true;
+    application.monitor = .{ .index = 0, .x = 0, .y = 0, .width = 1920, .height = 1080 };
+    application.font = std.mem.zeroes(rl.Font);
+    application.current_layout = std.mem.zeroes(ui.GridLayout);
+
+    application.drainUpdateQueue();
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(@as(usize, 0), application.items.items.len);
+    try std.testing.expectEqual(@as(usize, 0), application.temp_tasks.items.len);
 }
