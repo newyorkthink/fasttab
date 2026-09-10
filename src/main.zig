@@ -11,7 +11,6 @@ const c = @cImport({
 
 const log = std.log.scoped(.fasttab);
 const SHOW_DELAY_FRAMES: u8 = 1;
-const FASTTAB_VERSION = "2.0.7";
 const LOCK_VARIANTS = [_]u16{
     0,
     x11.MOD_LOCK,
@@ -48,24 +47,17 @@ fn stdoutPrint(comptime format: []const u8, args: anytype) void {
 
 fn printHelp() void {
     stdoutPrint(
-        "FastTab {s}\n" ++
-            "Fast GPU-accelerated X11 window switcher.\n\n" ++
+        "Fast GPU-accelerated X11 window switcher.\n\n" ++
             "Usage:\n" ++
             "  fasttab [COMMAND] [OPTIONS]\n\n" ++
             "Commands:\n" ++
             "  daemon              Run the FastTab daemon (default)\n" ++
-            "  help                Show this help and exit\n" ++
-            "  version             Show version information and exit\n\n" ++
+            "  help                Show this help and exit\n\n" ++
             "Options:\n" ++
             "  --daemon            Run the FastTab daemon\n" ++
-            "  -h, --help          Show this help and exit\n" ++
-            "  -v, -V, --version   Show version information and exit\n",
-        .{FASTTAB_VERSION},
+            "  -h, --help          Show this help and exit\n",
+        .{},
     );
-}
-
-fn printVersion() void {
-    stdoutPrint("FastTab {s}\n", .{FASTTAB_VERSION});
 }
 
 pub fn main() !void {
@@ -81,15 +73,6 @@ pub fn main() !void {
             std.mem.eql(u8, arg, "--help"))
         {
             printHelp();
-            return;
-        }
-
-        if (std.mem.eql(u8, arg, "version") or
-            std.mem.eql(u8, arg, "-v") or
-            std.mem.eql(u8, arg, "-V") or
-            std.mem.eql(u8, arg, "--version"))
-        {
-            printVersion();
             return;
         }
 

@@ -92,9 +92,6 @@ fasttab daemon           明确启动守护进程
 fasttab --daemon         明确启动守护进程
 fasttab help             显示帮助
 fasttab -h, --help       显示帮助
-fasttab version          显示版本
-fasttab -v, -V, --version
-                         显示版本
 ```
 
 未知参数返回退出码 `2`，错误信息输出到标准错误。

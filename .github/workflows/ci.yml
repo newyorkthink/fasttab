@@ -74,7 +74,6 @@ jobs:
           test ! -e tools/generate_gpu_preview_sources.py
           test ! -e tools/fix_generated_gpu_source.py
           grep -Fq "X-AppImage-Version=$VERSION" packaging/fasttab.desktop
-          grep -Fq "const FASTTAB_VERSION = \"$VERSION\";" src/main.zig
           grep -Fq 'self.releaseAllBindings();' src/app.zig
           grep -Fq 'if (self.window_hidden) return;' src/app.zig
           grep -Fq 'tex.reacquire(self.conn)' src/app.zig
@@ -109,14 +108,18 @@ jobs:
 
       - name: 核对命令行输出流
         run: |
-          VERSION="$(tr -d '[:space:]' < VERSION)"
           test -x zig-out/bin/fasttab
           zig-out/bin/fasttab --help >help.out 2>help.err
-          grep -Fq "FastTab $VERSION" help.out
+          grep -Fq 'Fast GPU-accelerated X11 window switcher.' help.out
+          ! grep -Fq 'version' help.out
           test ! -s help.err
+          set +e
           zig-out/bin/fasttab --version >version.out 2>version.err
-          grep -Fxq "FastTab $VERSION" version.out
-          test ! -s version.err
+          version_status=$?
+          set -e
+          test "$version_status" -eq 2
+          test ! -s version.out
+          grep -Fq 'Error: unknown argument: --version' version.err
           set +e
           zig-out/bin/fasttab --invalid >invalid.out 2>invalid.err
           status=$?
