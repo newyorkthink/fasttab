@@ -66,7 +66,7 @@ jobs:
         run: |
           set -euxo pipefail
           VERSION="$(tr -d '[:space:]' < VERSION)"
-          [[ "$VERSION" == "2.0.7" ]]
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           python -m py_compile .github/scripts/*.py
           python -c "import xml.etree.ElementTree as ET; ET.parse('packaging/fasttab.svg')"
           bash -n setup.sh build_appimage.sh build_packages.sh
@@ -280,7 +280,7 @@ jobs:
       - name: 写入中文发布说明
         run: |
           cat > RELEASE_NOTES.md <<'NOTES'
-          FastTab 2.0.7 修复窗口预览偶发透明问题，同时保留通用实时预览机制和工作区布局修正。
+          FastTab 修复窗口预览偶发透明问题，同时保留通用实时预览机制和工作区布局修正。
 
           主要更新：
 
@@ -303,7 +303,7 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.version }}
           target_commitish: ${{ github.sha }}
-          name: FastTab ${{ steps.version.outputs.version }}
+          name: FastTab
           body_path: RELEASE_NOTES.md
           files: dist/*
           overwrite_files: true
@@ -318,7 +318,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           gh release edit "$VERSION" \
-            --title "FastTab $VERSION" \
+            --title "FastTab" \
             --notes-file RELEASE_NOTES.md \
             --latest
 
@@ -337,6 +337,7 @@ jobs:
           version = os.environ["VERSION"]
           release = json.loads(Path("release.json").read_text(encoding="utf-8"))
           assert release["tag_name"] == version
+          assert release["name"] == "FastTab"
           assert release["draft"] is False
           assert release["prerelease"] is False
           assert "主要更新" in release["body"]

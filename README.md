@@ -6,9 +6,9 @@
 
 FastTab 是一款面向 X11 的高性能窗口切换器，使用 Zig、Raylib 和 OpenGL 编写，支持 `Alt+Tab` 与 `Win+Tab`。
 
-## FastTab 2.0.7
+## 最新版本
 
-FastTab 2.0.7 修复窗口预览偶发透明问题，同时保留通用实时预览机制，主要包括：
+最新版本修复窗口预览偶发透明问题，同时保留通用实时预览机制，主要包括：
 
 - X11 客户端提供有效 RGB 但 pixmap Alpha 为 0 或未定义时，仍保留正常画面。
 - 在所有应用共用的着色器中修复，不添加 Firefox 专用规则。
@@ -61,16 +61,16 @@ FastTab 2.0.7 修复窗口预览偶发透明问题，同时保留通用实时预
 
 | 架构 | AppImage | DEB | RPM |
 |---|---|---|---|
-| x86_64 / AMD64 | `FastTab-2.0.7-x86_64.AppImage` | `fasttab_2.0.7_amd64.deb` | `fasttab-2.0.7-1.x86_64.rpm` |
-| ARM64 / AArch64 | `FastTab-2.0.7-aarch64.AppImage` | `fasttab_2.0.7_arm64.deb` | `fasttab-2.0.7-1.aarch64.rpm` |
+| x86_64 / AMD64 | `FastTab-*-x86_64.AppImage` | `fasttab_*_amd64.deb` | `fasttab-*-1.x86_64.rpm` |
+| ARM64 / AArch64 | `FastTab-*-aarch64.AppImage` | `fasttab_*_arm64.deb` | `fasttab-*-1.aarch64.rpm` |
 
 发布页面同时提供 SHA-256 校验文件和 AppImage zsync 更新元数据。
 
 ### AppImage
 
 ```bash
-chmod +x FastTab-2.0.7-x86_64.AppImage
-./FastTab-2.0.7-x86_64.AppImage
+chmod +x FastTab-*-x86_64.AppImage
+./FastTab-*-x86_64.AppImage
 ```
 
 ARM64 设备请使用文件名中包含 `aarch64` 的版本。
@@ -78,15 +78,15 @@ ARM64 设备请使用文件名中包含 `aarch64` 的版本。
 ### Debian / Ubuntu
 
 ```bash
-sudo apt install ./fasttab_2.0.7_amd64.deb
+sudo apt install ./fasttab_*_amd64.deb
 ```
 
-ARM64 设备请安装 `fasttab_2.0.7_arm64.deb`。
+ARM64 设备请安装文件名中包含 `arm64` 的 DEB 包。
 
 ### Fedora / RHEL 系列
 
 ```bash
-sudo dnf install ./fasttab-2.0.7-1.x86_64.rpm
+sudo dnf install ./fasttab-*-1.x86_64.rpm
 ```
 
 ARM64 设备请安装文件名中包含 `aarch64` 的 RPM 包。
