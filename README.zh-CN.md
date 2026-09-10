@@ -6,6 +6,8 @@
 
 FastTab 是一款面向 X11 的高性能窗口切换器，使用 Zig、Raylib 和 OpenGL 编写，支持 `Alt+Tab` 与 `Win+Tab`。
 
+项目维护状态、已完成修改和上游同步记录见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 最新版本
 
 最新版本修复窗口预览偶发透明问题，同时保留通用实时预览机制，主要包括：
