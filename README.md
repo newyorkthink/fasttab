@@ -18,7 +18,7 @@ FastTab 是一款面向 X11 的高性能窗口切换器，使用 Zig、Raylib �
 - FastTab 隐藏时释放 XComposite/GLX 绑定，再次显示时重新获取最新的窗口 backing pixmap。
 - 缓存截图仅用于跨工作区或窗口暂时未映射时的兜底。
 - 保留默认选中当前窗口、i3 工作区总览、工作区角标、鼠标操作和多显示器布局。
-- 继续提供 x86_64 与 ARM64/AArch64 的 AppImage、DEB 和 RPM 安装包。
+- Release 仅保留一个 x86_64 AppImage 文件：`fasttab.AppImage`。
 
 ## 已知问题
 
@@ -51,45 +51,24 @@ FastTab 是一款面向 X11 的高性能窗口切换器，使用 Zig、Raylib �
 
 - 使用 X11 会话的 Linux 系统。
 - 支持硬件加速的 OpenGL。
-- x86_64 或 ARM64/AArch64 处理器。
+- x86_64 处理器。
 
 暂不支持原生 Wayland 会话。
 
-## 下载文件
+## 下载与运行
 
-每个正式版本均提供：
+Release 仅提供一个文件：
 
-| 架构 | AppImage | DEB | RPM |
-|---|---|---|---|
-| x86_64 / AMD64 | `FastTab-*-x86_64.AppImage` | `fasttab_*_amd64.deb` | `fasttab-*-1.x86_64.rpm` |
-| ARM64 / AArch64 | `FastTab-*-aarch64.AppImage` | `fasttab_*_arm64.deb` | `fasttab-*-1.aarch64.rpm` |
-
-发布页面同时提供 SHA-256 校验文件和 AppImage zsync 更新元数据。
-
-### AppImage
-
-```bash
-chmod +x FastTab-*-x86_64.AppImage
-./FastTab-*-x86_64.AppImage
+```text
+fasttab.AppImage
 ```
 
-ARM64 设备请使用文件名中包含 `aarch64` 的版本。
-
-### Debian / Ubuntu
+在 Linux 终端执行：
 
 ```bash
-sudo apt install ./fasttab_*_amd64.deb
+chmod +x fasttab.AppImage
+./fasttab.AppImage
 ```
-
-ARM64 设备请安装文件名中包含 `arm64` 的 DEB 包。
-
-### Fedora / RHEL 系列
-
-```bash
-sudo dnf install ./fasttab-*-1.x86_64.rpm
-```
-
-ARM64 设备请安装文件名中包含 `aarch64` 的 RPM 包。
 
 ## 启动 FastTab
 
@@ -134,32 +113,10 @@ zig build -Doptimize=ReleaseSafe -Dcpu=baseline
 
 生成的程序位于 `zig-out/bin/fasttab`。
 
-在当前原生架构上构建全部安装包：
-
-```bash
-bash ./build_packages.sh
-```
-
 仅构建 AppImage：
 
 ```bash
 ./build_appimage.sh
-```
-
-## 安装后的图标结构
-
-DEB 和 RPM 包会安装：
-
-```text
-/usr/share/applications/fasttab.desktop
-/usr/share/icons/hicolor/16x16/apps/fasttab.png
-/usr/share/icons/hicolor/32x32/apps/fasttab.png
-/usr/share/icons/hicolor/64x64/apps/fasttab.png
-/usr/share/icons/hicolor/128x128/apps/fasttab.png
-/usr/share/icons/hicolor/256x256/apps/fasttab.png
-/usr/share/icons/hicolor/scalable/apps/fasttab.svg
-/usr/share/pixmaps/fasttab.png
-/usr/share/doc/fasttab/LICENSE.md
 ```
 
 ## 许可证
