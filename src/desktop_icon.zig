@@ -17,19 +17,170 @@ pub const IconResult = struct {
 };
 
 const ICON_SIZES = [_][]const u8{ "16x16", "22x22", "24x24", "32x32", "48x48", "64x64", "128x128", "256x256", "512x512" };
+const MAX_PROC_ENV_BYTES = 1024 * 1024;
 
 pub fn getAppIcon(allocator: mem.Allocator, app_name: []const u8, target_size: u32) !IconResult {
-    const icon_id = try findIconNameFromDesktop(allocator, app_name) orelse return error.IconNameNotFound;
-    defer allocator.free(icon_id);
+    var host_icon_found = false;
 
-    if (fs.path.isAbsolute(icon_id)) {
-        return try loadPng(icon_id);
+    if (try findIconNameFromDesktop(allocator, app_name)) |icon_id| {
+        host_icon_found = true;
+        defer allocator.free(icon_id);
+
+        if (fs.path.isAbsolute(icon_id)) {
+            if (loadPng(icon_id)) |icon| {
+                return icon;
+            } else |_| {}
+        } else if (try resolveIconPath(allocator, icon_id, target_size)) |icon_path| {
+            defer allocator.free(icon_path);
+            if (loadPng(icon_path)) |icon| {
+                return icon;
+            } else |_| {}
+        }
     }
 
-    const icon_path = try resolveIconPath(allocator, icon_id, target_size) orelse return error.IconFileNotFound;
-    defer allocator.free(icon_path);
+    // AppImage fallback: mirror the working AltTab behavior by locating
+    // running AppImage mounts through APPDIR and using their embedded icon.
+    if (try getRunningAppImageIcon(allocator, app_name)) |icon| {
+        return icon;
+    }
 
-    return try loadPng(icon_path);
+    if (host_icon_found) return error.IconFileNotFound;
+    return error.IconNameNotFound;
+}
+
+fn isDecimalName(name: []const u8) bool {
+    if (name.len == 0) return false;
+    for (name) |ch| {
+        if (ch < '0' or ch > '9') return false;
+    }
+    return true;
+}
+
+fn getRunningAppImageIcon(allocator: mem.Allocator, app_name: []const u8) !?IconResult {
+    var proc_dir = fs.openDirAbsolute("/proc", .{ .iterate = true }) catch return null;
+    defer proc_dir.close();
+
+    var proc_iter = proc_dir.iterate();
+    while (proc_iter.next() catch null) |entry| {
+        if (!isDecimalName(entry.name)) continue;
+
+        const environ_path = try fs.path.join(allocator, &.{ "/proc", entry.name, "environ" });
+        defer allocator.free(environ_path);
+
+        var file = fs.openFileAbsolute(environ_path, .{}) catch continue;
+        defer file.close();
+
+        const environment = file.readToEndAlloc(allocator, MAX_PROC_ENV_BYTES) catch continue;
+        defer allocator.free(environment);
+
+        var env_iter = mem.splitScalar(u8, environment, 0);
+        while (env_iter.next()) |item| {
+            if (!mem.startsWith(u8, item, "APPDIR=")) continue;
+
+            const appdir = item[7..];
+            if (appdir.len == 0 or !fs.path.isAbsolute(appdir)) break;
+            fs.accessAbsolute(appdir, .{}) catch break;
+
+            if (try loadMatchingAppDirIcon(allocator, appdir, app_name)) |icon| {
+                return icon;
+            }
+            break;
+        }
+    }
+
+    return null;
+}
+
+fn loadMatchingAppDirIcon(allocator: mem.Allocator, appdir: []const u8, app_name: []const u8) !?IconResult {
+    var dir = fs.openDirAbsolute(appdir, .{ .iterate = true }) catch return null;
+    defer dir.close();
+
+    const desktop_file = if (mem.endsWith(u8, app_name, ".desktop"))
+        try allocator.dupe(u8, app_name)
+    else
+        try std.fmt.allocPrint(allocator, "{s}.desktop", .{app_name});
+    defer allocator.free(desktop_file);
+
+    var dir_iter = dir.iterate();
+    while (dir_iter.next() catch null) |entry| {
+        if (!mem.endsWith(u8, entry.name, ".desktop")) continue;
+
+        const filename_matches = mem.eql(u8, entry.name, desktop_file);
+        const icon_id = try scanAppDirDesktopForIcon(allocator, dir, entry.name, app_name, filename_matches) orelse continue;
+        defer allocator.free(icon_id);
+
+        // AppImage convention: .DirIcon normally points at the application icon.
+        const diricon = try fs.path.join(allocator, &.{ appdir, ".DirIcon" });
+        defer allocator.free(diricon);
+        if (loadPng(diricon)) |icon| {
+            return icon;
+        } else |_| {}
+
+        if (try loadAppDirIconValue(allocator, appdir, icon_id)) |icon| {
+            return icon;
+        }
+    }
+
+    return null;
+}
+
+fn scanAppDirDesktopForIcon(
+    allocator: mem.Allocator,
+    dir: fs.Dir,
+    filename: []const u8,
+    app_name: []const u8,
+    filename_matches: bool,
+) !?[]const u8 {
+    var file = dir.openFile(filename, .{}) catch return null;
+    defer file.close();
+
+    var icon_val: ?[]const u8 = null;
+    errdefer if (icon_val) |v| allocator.free(v);
+
+    var wm_class_matches = false;
+    var reader = std.io.bufferedReader(file.reader());
+    var buf: [1024]u8 = undefined;
+    while (reader.reader().readUntilDelimiterOrEof(&buf, '\n') catch null) |line| {
+        const t = mem.trim(u8, line, " \r");
+        if (icon_val == null and mem.startsWith(u8, t, "Icon=")) {
+            icon_val = try allocator.dupe(u8, t[5..]);
+        }
+        if (mem.startsWith(u8, t, "StartupWMClass=") and mem.eql(u8, t[15..], app_name)) {
+            wm_class_matches = true;
+        }
+    }
+
+    if (filename_matches or wm_class_matches) return icon_val;
+    if (icon_val) |v| allocator.free(v);
+    return null;
+}
+
+fn loadAppDirIconValue(allocator: mem.Allocator, appdir: []const u8, icon_id: []const u8) !?IconResult {
+    const candidate = if (fs.path.isAbsolute(icon_id)) blk: {
+        if (mem.startsWith(u8, icon_id, appdir)) {
+            break :blk try allocator.dupe(u8, icon_id);
+        }
+        break :blk try fs.path.join(allocator, &.{ appdir, mem.trimLeft(u8, icon_id, "/") });
+    } else try fs.path.join(allocator, &.{ appdir, icon_id });
+    defer allocator.free(candidate);
+
+    if (loadPng(candidate)) |icon| {
+        return icon;
+    } else |_| {}
+
+    if (!mem.endsWith(u8, candidate, ".png")) {
+        const png_candidate = if (mem.endsWith(u8, candidate, ".svg"))
+            try std.fmt.allocPrint(allocator, "{s}.png", .{candidate[0 .. candidate.len - 4]})
+        else
+            try std.fmt.allocPrint(allocator, "{s}.png", .{candidate});
+        defer allocator.free(png_candidate);
+
+        if (loadPng(png_candidate)) |icon| {
+            return icon;
+        } else |_| {}
+    }
+
+    return null;
 }
 
 /// Returns an owned copy of the XDG data home directory path.
