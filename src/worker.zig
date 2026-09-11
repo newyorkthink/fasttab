@@ -1,5 +1,6 @@
 const std = @import("std");
 const x11 = @import("x11.zig");
+const wm_hints_icon = @import("wm_hints_icon.zig");
 const thumbnail = @import("thumbnail.zig");
 const window_scanner = @import("window_scanner.zig");
 
@@ -187,7 +188,8 @@ fn fetchAndCacheIcon(
     wm_class: []const u8,
     icon_cache: *std.StringHashMap(thumbnail.Thumbnail),
 ) ?thumbnail.Thumbnail {
-    var icon_raw = x11.getWindowIcon(allocator, conn.conn, window_id, conn.atoms, thumbnail.ICON_SIZE) orelse return null;
+    var icon_raw = x11.getWindowIcon(allocator, conn.conn, window_id, conn.atoms, thumbnail.ICON_SIZE) orelse
+        wm_hints_icon.getWindowIcon(allocator, conn, window_id) orelse return null;
     defer icon_raw.deinit();
 
     const icon_thumb = thumbnail.processIconArgb(icon_raw.data, icon_raw.width, icon_raw.height, allocator) catch return null;
