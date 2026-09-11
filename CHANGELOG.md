@@ -120,3 +120,14 @@
 - 验证：已完整核对 `src/app.zig`、`src/x11.zig`、`src/ui.zig`、`src/main.zig` 的调用链、XComposite/GLX 资源生命周期和相关测试逻辑，并更新重获取选择测试以覆盖“全局窗口列表中跳过已知其他工作区窗口”。当前连接器会话没有可用的 Zig 本地编译环境，因此不把静态检查描述为本地构建或 GUI 实机验证；真实 Linux/i3 下的浏览器预览效果仍待确认。
 - Actions：未修改 workflow；按仓库约定不手动触发、重跑或监控 GitHub Actions。
 - 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；本次修改前本仓库相对上游为 `ahead 129 / behind 0`，merge base 为该上游 HEAD，无新提交需要采用。
+
+### 修复宿主 desktop ID 与大尺寸图标查找
+
+- 状态：待实机确认。
+- 修改文件：`src/desktop_icon.zig`、`CHANGELOG.md`。
+- 原始现象：BlueMail 在 FastTab 中没有小图标，而同一环境中的 alttab 可以显示；kitty 图标修复已经实机确认，本次不改动该已验证路径。
+- 根因：对照 `newyorkthink/linux-packaging/alttab` 后确认 FastTab 的宿主 desktop 查找仍比 alttab 窄：desktop 文件 ID 使用区分大小写的精确文件名匹配，缺少或不匹配 `StartupWMClass` 时会漏掉仅大小写不同的桌面项；hicolor 尺寸表只到 `512x512`，而 BlueMail 的公开 Linux RPM 安装记录包含 `bluemail.desktop` 和 `hicolor/1024x1024/apps/bluemail.png`；此外宿主 `Icon=` 已带 `.png` 时旧逻辑还会重复追加扩展名。
+- 修改内容：宿主 desktop 文件 ID 改为大小写不敏感匹配，同时保留现有 `StartupWMClass` 第二阶段匹配；补齐常见 hicolor 尺寸到 `1024x1024`，优先请求尺寸及更大图标，找不到时再向较小尺寸回退；`Icon=*.png` 保留已有扩展名，不再生成 `.png.png`。现有“窗口实例名 + 应用类名 → 宿主 desktop/icon → 目标 PID 的 AppImage APPDIR → `_NET_WM_ICON`”优先级和 kitty 已验证逻辑不变，不增加 BlueMail 名称硬编码。
+- 验证：新增纯函数回归测试覆盖 desktop ID 大小写匹配、已有 PNG 扩展名保留及 `1024x1024` 尺寸表；并重新核对 `src/x11.zig`、`src/worker.zig` 和 `build.zig` 的调用/测试入口。当前连接器会话没有可用的 Zig 本地编译环境，因此仅完成静态检查，不宣称本地测试或 GUI 实机验证通过；BlueMail 最终显示仍待实机确认。
+- Actions：未修改 workflow；按仓库约定不手动触发、重跑或监控 GitHub Actions。
+- 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；本次修改前本仓库相对上游为 `ahead 130 / behind 0`，merge base 为该上游 HEAD，无新提交需要采用。

@@ -16,7 +16,7 @@ pub const IconResult = struct {
     }
 };
 
-const ICON_SIZES = [_][]const u8{ "16x16", "22x22", "24x24", "32x32", "48x48", "64x64", "128x128", "256x256", "512x512" };
+const ICON_SIZES = [_][]const u8{ "16x16", "22x22", "24x24", "32x32", "36x36", "48x48", "64x64", "72x72", "96x96", "128x128", "192x192", "256x256", "512x512", "1024x1024" };
 const MAX_PROC_ENV_BYTES = 1024 * 1024;
 
 pub fn getAppIcon(allocator: mem.Allocator, app_names: []const []const u8, target_size: u32, pid: ?std.posix.pid_t) !IconResult {
@@ -173,6 +173,20 @@ fn xdgDataHome(allocator: mem.Allocator) ![]const u8 {
     return fs.path.join(allocator, &.{ home, ".local/share" });
 }
 
+fn desktopFileMatchesAppName(filename: []const u8, app_name: []const u8) bool {
+    const suffix = ".desktop";
+    if (filename.len <= suffix.len) return false;
+    if (!std.ascii.eqlIgnoreCase(filename[filename.len - suffix.len ..], suffix)) return false;
+
+    const file_id = filename[0 .. filename.len - suffix.len];
+    const app_id = if (app_name.len > suffix.len and
+        std.ascii.eqlIgnoreCase(app_name[app_name.len - suffix.len ..], suffix))
+        app_name[0 .. app_name.len - suffix.len]
+    else
+        app_name;
+    return std.ascii.eqlIgnoreCase(file_id, app_id);
+}
+
 fn findIconNameFromDesktop(allocator: mem.Allocator, app_name: []const u8) !?[]const u8 {
     const data_home = try xdgDataHome(allocator);
     defer allocator.free(data_home);
@@ -194,20 +208,17 @@ fn findIconNameFromDesktop(allocator: mem.Allocator, app_name: []const u8) !?[]c
         try search_dirs.append(try fs.path.join(allocator, &.{ dir, "applications" }));
     }
 
-    const desktop_file = if (mem.endsWith(u8, app_name, ".desktop"))
-        try allocator.dupe(u8, app_name)
-    else
-        try std.fmt.allocPrint(allocator, "{s}.desktop", .{app_name});
-    defer allocator.free(desktop_file);
-
-    // Pass 1: exact filename match
+    // Pass 1: match desktop file IDs case-insensitively. WM_CLASS capitalization
+    // does not have to match the package's lowercase desktop filename.
     for (search_dirs.items) |base| {
         if (!fs.path.isAbsolute(base)) continue;
-
-        var dir = fs.openDirAbsolute(base, .{}) catch continue;
+        var dir = fs.openDirAbsolute(base, .{ .iterate = true }) catch continue;
         defer dir.close();
-
-        if (try scanDesktopForIcon(allocator, dir, desktop_file, null)) |icon| return icon;
+        var dir_iter = dir.iterate();
+        while (dir_iter.next() catch null) |entry| {
+            if (!desktopFileMatchesAppName(entry.name, app_name)) continue;
+            if (try scanDesktopForIcon(allocator, dir, entry.name, null)) |icon| return icon;
+        }
     }
 
     // Pass 2: scan all .desktop files for StartupWMClass= match.
@@ -226,6 +237,14 @@ fn findIconNameFromDesktop(allocator: mem.Allocator, app_name: []const u8) !?[]c
     }
 
     return null;
+}
+
+fn pngIconFilename(allocator: mem.Allocator, icon_id: []const u8) ![]const u8 {
+    const suffix = ".png";
+    if (icon_id.len >= suffix.len and std.ascii.eqlIgnoreCase(icon_id[icon_id.len - suffix.len ..], suffix)) {
+        return allocator.dupe(u8, icon_id);
+    }
+    return std.fmt.allocPrint(allocator, "{s}.png", .{icon_id});
 }
 
 fn resolveIconPath(allocator: mem.Allocator, icon_id: []const u8, target_size: u32) !?[]const u8 {
@@ -260,11 +279,26 @@ fn resolveIconPath(allocator: mem.Allocator, icon_id: []const u8, target_size: u
         }
     }
 
-    const icon_filename = try std.fmt.allocPrint(allocator, "{s}.png", .{icon_id});
+    const icon_filename = try pngIconFilename(allocator, icon_id);
     defer allocator.free(icon_filename);
 
-    // Strategy: Check requested size, then crawl UP for higher fidelity
+    // Strategy: Check requested size, then crawl UP for higher fidelity.
     for (ICON_SIZES[start_idx..]) |size_dir| {
+        for (hicolor_roots.items) |root| {
+            const path = try fs.path.join(allocator, &.{ root, size_dir, "apps", icon_filename });
+            fs.accessAbsolute(path, .{}) catch {
+                allocator.free(path);
+                continue;
+            };
+            return path;
+        }
+    }
+
+    // If only a smaller raster exists, use it rather than dropping the icon.
+    var lower_idx = start_idx;
+    while (lower_idx > 0) {
+        lower_idx -= 1;
+        const size_dir = ICON_SIZES[lower_idx];
         for (hicolor_roots.items) |root| {
             const path = try fs.path.join(allocator, &.{ root, size_dir, "apps", icon_filename });
             fs.accessAbsolute(path, .{}) catch {
@@ -309,6 +343,28 @@ fn loadPng(path: []const u8) !IconResult {
         .height = height,
         .pixels = data[0..@intCast(width * height * 4)],
     };
+}
+
+test "desktop filename matching is case-insensitive" {
+    try std.testing.expect(desktopFileMatchesAppName("mailclient.desktop", "MailClient"));
+    try std.testing.expect(desktopFileMatchesAppName("MailClient.desktop", "mailclient.desktop"));
+    try std.testing.expect(!desktopFileMatchesAppName("other.desktop", "MailClient"));
+    try std.testing.expect(!desktopFileMatchesAppName("mailclient.txt", "MailClient"));
+}
+
+test "PNG icon filename preserves an existing extension" {
+    const allocator = std.testing.allocator;
+    const plain = try pngIconFilename(allocator, "mailclient");
+    defer allocator.free(plain);
+    try std.testing.expectEqualStrings("mailclient.png", plain);
+
+    const existing = try pngIconFilename(allocator, "mailclient.PNG");
+    defer allocator.free(existing);
+    try std.testing.expectEqualStrings("mailclient.PNG", existing);
+}
+
+test "hicolor sizes include large application icons" {
+    try std.testing.expectEqualStrings("1024x1024", ICON_SIZES[ICON_SIZES.len - 1]);
 }
 
 test "APPDIR parsing rejects unrelated variables and relative paths" {
