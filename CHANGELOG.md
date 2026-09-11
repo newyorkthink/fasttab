@@ -237,4 +237,12 @@
 - 修改内容：主线程每次显示前重新检查窗口类名，可见期间最多每秒复查一次；识别到 Zen 时清除已有图标引用并将图标 ID 置空，阻止后续 Navigator 缓存通知重新赋值。同步当前工作区视图的图标 ID；不释放其他窗口仍使用的共享纹理，不修改窗口预览、XDamage、排序或其他应用图标解析。
 - 验证：本地 87 项测试与 ReleaseSafe 构建通过；新增回归覆盖已有图标清除、共享键脱离、重复清除及标题和预览状态保留。未安装软件、未替换或重启用户正在运行的程序；实际 GUI 效果仍待确认。
 - Actions：使用 `[skip ci]` 提交推送，不触发或监控。
-- 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`，修改前 `ahead 145 / behind 0`，无新提交需要采用。
+- 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`，修改前 `ahead 145 / behind 0`，无新上游提交需要采用。
+
+### 固化 Public 仓库自动 Actions 提交规则
+
+- 状态：完成。
+- 修改文件：`AGENTS.md`、`CHANGELOG.md`。
+- 原因：Public 仓库现有 `ci.yml` 已配置 `push` 到 `main` 自动触发，后续提交不应通过提交信息绕过自动 CI，也不需要 AI 在推送后持续查询运行状态。
+- 修改内容：`AGENTS.md` 明确要求所有提交到 `main` 的 commit message 不得包含任何跳过 CI / GitHub Actions 的标记或等价写法；正常 push 后由现有 workflow 自动运行。除非用户明确要求，不手动触发、重跑、查询、轮询、监控或等待 Actions。
+- 验证：完整读取当前 `AGENTS.md`、`CHANGELOG.md` 和 `.github/workflows/ci.yml`；确认本次不修改 workflow，不改动源码、README、打包或 Release 逻辑。本次提交信息不包含任何跳过 CI / Actions 的标记，push 后不主动监控自动运行结果。

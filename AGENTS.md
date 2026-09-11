@@ -79,7 +79,10 @@ fasttab --version
 
 - `.github/workflows/` 当前只保留 `ci.yml`。
 - 不得为了一个临时问题新增第二套 workflow、测试 workflow 或重复发布 workflow。
-- 正常、必要的构建和测试可以使用现有 CI；本仓库是 Public 仓库，不需要为了节省 Actions 分钟牺牲正确性，但仍要避免无意义重复运行。
+- 本仓库是 Public 仓库，现有 `ci.yml` 已配置 `push` 到 `main` 自动触发；正常提交并推送 `main` 后让 GitHub Actions 自行运行即可。
+- 任何提交到 `main` 的 commit message 都不得包含用于跳过 CI / GitHub Actions 的标记或等价指令，不得故意绕过现有 `push` 自动触发。
+- 推送完成后，除非用户明确要求，不手动触发、不重跑、不轮询、不监控、不等待 GitHub Actions；后续自动运行结果由 GitHub 自行处理。
+- 不得为了节省 Actions 分钟牺牲正确性，但仍要避免无意义重复 push、重复构建和把 Actions 当作试错环境。
 - Release 使用固定 `latest` tag。
 - Release 标题固定为 `FastTab`。
 - Release 正文保持为空，详细说明放在 README / CHANGELOG。
@@ -241,6 +244,8 @@ LBognanni/fasttab
 - GUI / X11 / GLX 的最终实机效果不能仅靠 CI 代替；CI 成功只能证明构建与现有自动测试通过。
 - 不得声称“实机验证通过”，除非确实获得真实 Linux 环境运行结果。
 - 不得靠连续 push 多个猜测修复来使用 Actions 试错。
+- `main` 的 push 会由现有 workflow 自动触发 Actions；commit message 不得包含任何跳过 CI / Actions 的标记或等价指令。
+- push 完成即结束本次 GitHub 操作；除非用户明确要求，不主动查询运行状态，不轮询、不监控、不等待，也不手动触发或重跑 Actions。
 
 修改 `.github/workflows/ci.yml` 前必须完整检查：
 
@@ -262,6 +267,7 @@ LBognanni/fasttab
 - 提交前必须检查完整 diff，确认没有遗漏、误改或无关文件。
 - 如果写入过程中产生了临时或不完整提交，最终交付前必须整理掉，不得把试错历史留在 `main`。
 - Commit message 应准确描述最终修改，不写与实际内容不符的泛化标题。
+- Commit message 一律不得加入任何用于跳过 GitHub Actions / CI 的标记、关键字或等价写法；必须允许 Public 仓库现有 `push` 规则自动运行。
 - 不得通过 GitHub Actions 的失败结果来替代提交前静态检查。
 
 ## 12. README 与公开文档
@@ -324,9 +330,9 @@ fasttab/
 7. 同步更新 README（如当前行为说明受影响）。
 8. 同步追加 `CHANGELOG.md`。
 9. 检查完整 diff、语法、路径、参数、资源生命周期和 CI / Release 影响。
-10. 直接提交 `main`，避免多次试错提交。
-11. 默认完成本地检查、提交和推送后结束；除非用户明确要求，不手动触发、重跑或监控 GitHub Actions。仓库现有 push 自动触发配置不因此改动。
-12. 最终回复只说明最终状态：修改了哪些文件、解决了什么、仍有什么未验证、最终 commit 和 CI 状态。
+10. 直接提交 `main`，避免多次试错提交；commit message 不得加入任何跳过 CI / Actions 的标记。
+11. `main` push 后由 Public 仓库现有 workflow 自动运行；除非用户明确要求，不手动触发、重跑、查询、轮询、监控或等待 GitHub Actions。
+12. 最终回复只说明最终状态：修改了哪些文件、解决了什么、仍有什么未验证和最终 commit；未主动查询 Actions 时不要猜测或宣称其运行结果。
 
 ## 15. 最终交付前检查
 
@@ -341,4 +347,5 @@ fasttab/
 - 没有无关文件变化。
 - 完整 diff 与实际需求一致。
 - 如果涉及上游，已经记录上游核查结论。
+- Commit message 没有任何跳过 CI / Actions 的标记，push 后不主动监控自动运行的 Actions。
 - 对“完成”“CI 通过”“实机确认”的表述均有对应事实依据。
