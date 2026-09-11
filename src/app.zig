@@ -966,9 +966,11 @@ pub const App = struct {
                 return;
             }
 
-            if (!tex.rebind(self.conn)) {
+            const rebound = tex.rebind(self.conn);
+            if (!rebound) {
                 log.debug("GLX rebind failed for window {x}, reacquiring pixmap", .{drawable});
-                _ = self.cacheSnapshotForWindow(drawable);
+                // The failed binding cannot provide a trustworthy replacement snapshot.
+                self.markThumbnailReady(drawable, false);
                 tex.invalidate(self.conn);
 
                 if (!tex.reacquire(self.conn)) {
@@ -981,8 +983,8 @@ pub const App = struct {
                 }
             }
 
-            self.markThumbnailReady(drawable, true);
             if (self.findItemByWindowId(drawable)) |item| {
+                item.thumbnail_ready = canPromoteDamageTexture(item.cached_snapshot, rebound);
                 item.thumbnail_texture = tex.toRaylibTexture();
                 if (item.source_width != tex.width or item.source_height != tex.height) {
                     item.source_width = tex.width;
@@ -1155,6 +1157,10 @@ pub const App = struct {
     /// Perform no more than one GPU snapshot copy while hidden. Cheaply skip
     /// ineligible items until one copy succeeds or the pass is complete.
     const REACQUIRE_FRAME_BUDGET_NS: i128 = 10 * std.time.ns_per_ms;
+
+    fn canPromoteDamageTexture(cached_snapshot: ?rl.RenderTexture2D, rebound: bool) bool {
+        return rebound or canPromoteReacquiredTexture(cached_snapshot);
+    }
 
     fn canPromoteReacquiredTexture(cached_snapshot: ?rl.RenderTexture2D) bool {
         return cached_snapshot == null;
@@ -1763,4 +1769,11 @@ test "regrouping preserves the selected window after workspace refresh" {
     try std.testing.expectEqual(@as(u32, 20), application.items.items[application.selected_index].id);
     try std.testing.expectEqual(@as(usize, 0), application.selected_index);
     try std.testing.expect(application.mouseover_index == null);
+}
+
+test "failed damage rebind retains cached preview until a later successful rebind" {
+    const snapshot = std.mem.zeroes(rl.RenderTexture2D);
+    try std.testing.expect(!App.canPromoteDamageTexture(snapshot, false));
+    try std.testing.expect(App.canPromoteDamageTexture(snapshot, true));
+    try std.testing.expect(App.canPromoteDamageTexture(null, false));
 }

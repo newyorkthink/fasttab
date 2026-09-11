@@ -692,22 +692,34 @@ fn loadRootedPngDepth(
     depth: u8,
 ) !?IconResult {
     if (depth >= 8) return null;
-    const relative_path = mem.trimLeft(u8, logical_path, "/");
-    if (relative_path.len == 0) return null;
-
-    var link_buf: [fs.max_path_bytes]u8 = undefined;
-    if (root.readLink(relative_path, &link_buf)) |target| {
-        const resolved_relative = if (fs.path.isAbsolute(target))
-            try allocator.dupe(u8, mem.trimLeft(u8, target, "/"))
-        else if (fs.path.dirname(relative_path)) |parent|
-            try fs.path.join(allocator, &.{ parent, target })
-        else
-            try allocator.dupe(u8, target);
-        defer allocator.free(resolved_relative);
-        return loadRootedPngDepth(allocator, root, root_path, resolved_relative, depth + 1);
-    } else |_| {}
-
-    const candidate = try fs.path.join(allocator, &.{ root_path, relative_path });
+    // Resolve each component before continuing, including directory symlinks.
+    // Apply .. after symlink expansion and clamp it at the process root.
+    var resolved = std.ArrayList(u8).init(allocator);
+    defer resolved.deinit();
+    var components = mem.splitScalar(u8, logical_path, '/');
+    while (components.next()) |component| {
+        if (component.len == 0 or mem.eql(u8, component, ".")) continue;
+        if (mem.eql(u8, component, "..")) {
+            const parent = fs.path.dirname(resolved.items) orelse "";
+            resolved.shrinkRetainingCapacity(parent.len);
+            continue;
+        }
+        const parent_len = resolved.items.len;
+        if (parent_len > 0) try resolved.append('/');
+        try resolved.appendSlice(component);
+        var link_buf: [fs.max_path_bytes]u8 = undefined;
+        if (root.readLink(resolved.items, &link_buf)) |target| {
+            const parent = if (fs.path.isAbsolute(target)) "" else resolved.items[0..parent_len];
+            const next_path = try fs.path.join(allocator, &.{ parent, target, components.rest() });
+            defer allocator.free(next_path);
+            return loadRootedPngDepth(allocator, root, root_path, next_path, depth + 1);
+        } else |err| switch (err) {
+            error.NotLink => {},
+            else => return null,
+        }
+    }
+    if (resolved.items.len == 0) return null;
+    const candidate = try fs.path.join(allocator, &.{ root_path, resolved.items });
     defer allocator.free(candidate);
     if (loadPng(candidate)) |icon| return icon else |_| {}
     return null;
@@ -740,4 +752,24 @@ test "rooted desktop lookup keeps absolute icon symlinks inside the target root"
     var icon = (try loadRootedAppIcon(allocator, root_path, &.{"ContainerApp"}, 64)).?;
     defer icon.deinit();
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, icon.pixels);
+}
+
+test "rooted icon resolves directory symlinks relative links and root parent traversal" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("assets/nested");
+    try tmp.dir.makePath("usr/share");
+    try tmp.dir.writeFile(.{ .sub_path = "assets/icon.png", .data = test_png });
+    try tmp.dir.symLink("/assets/nested", "icons", .{ .is_directory = true });
+    try tmp.dir.symLink("../../icons", "usr/share/icons", .{ .is_directory = true });
+    try tmp.dir.symLink("cycle", "cycle", .{});
+    const root_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root_path);
+    for ([_][]const u8{ "icons/../icon.png", "usr/share/icons/../icon.png", "../../assets/icon.png" }) |path| {
+        var icon = (try loadRootedPng(allocator, tmp.dir, root_path, path)) orelse return error.TestUnexpectedResult;
+        defer icon.deinit();
+        try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, icon.pixels);
+    }
+    try std.testing.expect((try loadRootedPng(allocator, tmp.dir, root_path, "cycle")) == null);
 }
