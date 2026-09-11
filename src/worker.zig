@@ -17,7 +17,7 @@ pub const UpdateTask = union(enum) {
     pub const WindowAdded = struct {
         window_id: x11.xcb.xcb_window_t,
         title: []const u8, // owned
-        icon_id: []const u8, // owned (WM_CLASS)
+        icon_id: []const u8, // owned (WM_CLASS instance + class)
         is_minimized: bool,
         workspace: ?u32 = null,
         allocator: std.mem.Allocator,
@@ -30,7 +30,7 @@ pub const UpdateTask = union(enum) {
         allocator: std.mem.Allocator,
     };
     pub const IconAdded = struct {
-        icon_id: []const u8, // owned (WM_CLASS)
+        icon_id: []const u8, // owned (WM_CLASS instance + class)
         icon_data: []u8, // owned RGBA
         icon_width: u32,
         icon_height: u32,
@@ -169,7 +169,7 @@ pub const TaskQueue = struct {
 
 const TrackedWindow = struct {
     title: []const u8, // owned copy for comparison
-    icon_id: []const u8, // owned copy (WM_CLASS)
+    icon_id: []const u8, // owned copy (WM_CLASS instance + class)
     title_version: u32,
     next_icon_retry_ms: i64,
     allocator: std.mem.Allocator,
@@ -185,7 +185,7 @@ fn fetchAndCacheIcon(
     allocator: std.mem.Allocator,
     conn: *x11.Connection,
     window_id: x11.xcb.xcb_window_t,
-    wm_class: []const u8,
+    icon_key: []const u8,
     icon_cache: *std.StringHashMap(thumbnail.Thumbnail),
 ) ?thumbnail.Thumbnail {
     var icon_raw = x11.getWindowIcon(allocator, conn.conn, window_id, conn.atoms, thumbnail.ICON_SIZE) orelse
@@ -195,7 +195,7 @@ fn fetchAndCacheIcon(
     const icon_thumb = thumbnail.processIconArgb(icon_raw.data, icon_raw.width, icon_raw.height, allocator) catch return null;
 
     // Dupe the key; icon_thumb transfers directly into the cache (no thumbnail copy)
-    const cache_key = allocator.dupe(u8, wm_class) catch {
+    const cache_key = allocator.dupe(u8, icon_key) catch {
         var t = icon_thumb;
         t.deinit();
         return null;
@@ -209,10 +209,10 @@ fn fetchAndCacheIcon(
     };
 
     // Return the cached entry (the cache now owns the data)
-    return icon_cache.get(wm_class);
+    return icon_cache.get(icon_key);
 }
 
-/// Queue one icon update if the class has not been published yet.
+/// Queue one icon update if the identity has not been published yet.
 /// Some clients publish _NET_WM_ICON shortly after they are first mapped, so
 /// callers may retry this helper without duplicating an already-published icon.
 fn queueIconIfAvailable(
@@ -220,21 +220,21 @@ fn queueIconIfAvailable(
     queue: *TaskQueue,
     conn: *x11.Connection,
     window_id: x11.xcb.xcb_window_t,
-    wm_class: []const u8,
+    icon_key: []const u8,
     icon_cache: *std.StringHashMap(thumbnail.Thumbnail),
     pushed_icons: *std.StringHashMap(void),
 ) bool {
-    if (pushed_icons.contains(wm_class)) return true;
+    if (pushed_icons.contains(icon_key)) return true;
 
-    const cached_icon = icon_cache.get(wm_class) orelse
-        fetchAndCacheIcon(allocator, conn, window_id, wm_class, icon_cache) orelse return false;
+    const cached_icon = icon_cache.get(icon_key) orelse
+        fetchAndCacheIcon(allocator, conn, window_id, icon_key, icon_cache) orelse return false;
 
     const icon_data_copy = allocator.dupe(u8, cached_icon.data) catch return false;
-    const icon_id_owned = allocator.dupe(u8, wm_class) catch {
+    const icon_id_owned = allocator.dupe(u8, icon_key) catch {
         allocator.free(icon_data_copy);
         return false;
     };
-    const pushed_key = allocator.dupe(u8, wm_class) catch {
+    const pushed_key = allocator.dupe(u8, icon_key) catch {
         allocator.free(icon_id_owned);
         allocator.free(icon_data_copy);
         return false;
@@ -411,30 +411,20 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
                     }
                 }
             } else {
-                const wm_class = x11.getWindowClass(allocator, conn.conn, item.window_id, conn.atoms);
-                defer {
-                    if (!std.mem.eql(u8, wm_class, "(unknown)")) {
-                        allocator.free(wm_class);
-                    }
-                }
+                const icon_key = x11.getWindowIconCacheKey(allocator, conn.conn, item.window_id, conn.atoms) catch continue;
+                defer allocator.free(icon_key);
 
-                const icon_ready = queueIconIfAvailable(allocator, queue, &conn, item.window_id, wm_class, &icon_cache, &pushed_icons);
+                const icon_ready = queueIconIfAvailable(allocator, queue, &conn, item.window_id, icon_key, &icon_cache, &pushed_icons);
 
                 const title_owned = if (std.mem.eql(u8, item.title, "(unknown)"))
                     allocator.dupe(u8, "(unknown)") catch continue
                 else
                     allocator.dupe(u8, item.title) catch continue;
 
-                const icon_id_owned = if (std.mem.eql(u8, wm_class, "(unknown)"))
-                    allocator.dupe(u8, "(unknown)") catch {
-                        allocator.free(title_owned);
-                        continue;
-                    }
-                else
-                    allocator.dupe(u8, wm_class) catch {
-                        allocator.free(title_owned);
-                        continue;
-                    };
+                const icon_id_owned = allocator.dupe(u8, icon_key) catch {
+                    allocator.free(title_owned);
+                    continue;
+                };
 
                 const tracked = TrackedWindow{
                     .title = title_owned, // Takes ownership

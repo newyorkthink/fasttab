@@ -199,3 +199,13 @@
 - 限制：本次仅修复核查中确认的通用遗漏，不宣称彻底解决浏览器黑屏或 Zen Browser 图标；现有图标优先级、工作区排序及灰色占位保持原样。
 - Actions：按用户要求由用户自行执行；提交使用 `[skip ci]` 避免 push 自动触发，不修改 workflow、不监控 Actions。
 - 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；修改前 `ahead 141 / behind 0`，无新上游提交需要采用。
+
+### 修复共享 WM_CLASS instance 导致的浏览器图标串用
+
+- 状态：待实机确认。
+- 修改文件：`src/x11.zig`、`src/worker.zig`、`CHANGELOG.md`。
+- 根因：只读检查实际窗口属性发现 Firefox 为 `Navigator / firefox`，Zen 为 `Navigator / zen`；旧缓存仅使用第一段 `Navigator`，导致 Zen 复用 Firefox 已缓存、已发布的图标，跳过自身图标解析。
+- 修改内容：通用缓存键同时包含 WM_CLASS instance 与 class，以 NUL 分隔；worker 缓存、发布去重和传递给主线程的图标 ID 使用同一完整身份。现有图标来源优先级、已确认应用图标路径、预览和工作区排序不变，没有运行时应用名称特判。
+- 验证：本地 86 项测试与 ReleaseSafe 构建通过；新增回归验证相同 instance 的不同应用图标独立缓存、同一完整身份继续复用。实际 GUI 显示仍待用户确认，不据此宣称所有 Zen 缺图标问题已解决。
+- Actions：提交使用 `[skip ci]`，由用户自行执行，不触发或监控。
+- 上游核查：`LBognanni/fasttab` main 为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；修改前 `ahead 142 / behind 0`，无新上游提交需要采用。

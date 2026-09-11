@@ -1421,7 +1421,7 @@ pub const IconData = struct {
     }
 };
 
-/// Get the WM_CLASS instance used by the existing shared icon cache.
+/// Get the WM_CLASS instance used by icon source lookup.
 /// Caller must free the returned slice if it is not "(unknown)".
 pub fn getWindowClass(
     allocator: std.mem.Allocator,
@@ -1430,6 +1430,44 @@ pub fn getWindowClass(
     atoms: Atoms,
 ) []const u8 {
     return getWindowClassPart(allocator, conn, window, atoms, false);
+}
+
+/// Cache identity includes both WM_CLASS fields; different applications may
+/// share an instance name. Caller owns the returned slice, including its NUL.
+pub fn getWindowIconCacheKey(
+    allocator: std.mem.Allocator,
+    conn: *xcb.xcb_connection_t,
+    window: xcb.xcb_window_t,
+    atoms: Atoms,
+) ![]u8 {
+    const instance = getWindowClassPart(allocator, conn, window, atoms, false);
+    defer if (!std.mem.eql(u8, instance, "(unknown)")) allocator.free(instance);
+    const class = getWindowClassPart(allocator, conn, window, atoms, true);
+    defer if (!std.mem.eql(u8, class, "(unknown)")) allocator.free(class);
+    return windowIconCacheKey(allocator, instance, class);
+}
+
+fn windowIconCacheKey(allocator: std.mem.Allocator, instance: []const u8, class: []const u8) ![]u8 {
+    // WM_CLASS fields cannot contain NUL, so this separator is unambiguous.
+    return std.fmt.allocPrint(allocator, "{s}\x00{s}", .{ instance, class });
+}
+
+test "icon cache distinguishes applications sharing a WM_CLASS instance" {
+    const allocator = std.testing.allocator;
+    const first = try windowIconCacheKey(allocator, "Navigator", "firefox");
+    defer allocator.free(first);
+    const second = try windowIconCacheKey(allocator, "Navigator", "zen");
+    defer allocator.free(second);
+    const same = try windowIconCacheKey(allocator, "Navigator", "firefox");
+    defer allocator.free(same);
+    var cache = std.StringHashMap(u8).init(allocator);
+    defer cache.deinit();
+    try cache.put(first, 1);
+    try std.testing.expect(!cache.contains(second));
+    try cache.put(second, 2);
+    try std.testing.expectEqual(@as(u8, 1), cache.get(same).?);
+    try std.testing.expectEqual(@as(u8, 2), cache.get(second).?);
+    try std.testing.expectEqual(@as(usize, 2), cache.count());
 }
 
 fn getWindowClassPart(
