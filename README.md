@@ -24,7 +24,8 @@ FastTab 是一款面向 X11 的高性能窗口切换器，使用 Zig、Raylib �
 
 ## 已知问题
 
-- Firefox 和 Microsoft Edge 的窗口预览仍可能偶发黑屏或无法显示，尤其是在多次切换窗口后。该问题已确认，后续版本将继续修复。
+- Firefox、Microsoft Edge 等浏览器窗口预览仍可能偶发黑屏或无法显示，尤其是在多次切换窗口或工作区后；当前已经加入缓存与 XDamage 恢复保护，但仍按已知兼容性问题保留。
+- Zen Browser 在当前 browser RunImage 场景中仍可能没有应用小图标；同一环境中的 Edge、BlueMail、kitty 小图标已经实机确认正常，现有图标解析链路不再为 Zen 做无依据改动。
 
 ## 快捷键
 

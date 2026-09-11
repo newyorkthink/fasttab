@@ -175,3 +175,13 @@
 - 基线固化：`AGENTS.md` 明确记录已确认的浏览器黑帧缓存保护，以及 kitty、BlueMail、Edge 图标属于不得无故回退的稳定行为；图标优先级固定为“宿主 desktop/icon → AppImage `APPDIR` → 目标 PID 进程根 desktop/icon → `_NET_WM_ICON` → `WM_HINTS`”。
 - 验证：新增纯逻辑文件系统测试，用通用容器应用名构造目标根目录、desktop、hicolor 图标和指向容器 `/opt/...` 的绝对符号链接，覆盖进程根解析的关键路径；同时完整复核 `src/desktop_icon.zig`、`src/x11.zig`、`src/worker.zig` 的调用顺序。当前连接器执行环境没有 Zig 编译器，因此不宣称本次新代码已经本地构建或实机验证通过；未修改 workflow，也不手动触发、重跑或监控 Actions。
 - 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；父提交相对上游为 `ahead 139 / behind 0`，merge base 为该上游 HEAD，没有新上游提交需要采用。
+
+### 最终状态整理：保留已生效修复，Zen Browser 图标标记未解决
+
+- 状态：文档整理完成；Zen Browser 小图标未解决。
+- 修改文件：`README.md`、`README.zh-CN.md`、`CHANGELOG.md`；本次不修改任何源码、workflow、打包脚本或 Release 配置。
+- 实机结论：kitty、BlueMail、Microsoft Edge 小图标已经在真实 Linux 环境确认正常；Zen Browser 在当前 browser RunImage 中仍没有小图标，且同机 alttab 也没有该图标。提交 `6d68624cffeb401d8ca6fb584fefd048ae5e5152` 新增的目标 PID `/proc/<pid>/root` 通用回退未解决 Zen Browser 图标，因此该问题明确标记为 `未解决`，不再继续扩大图标解析链路。
+- 稳定基线：继续保留宿主 desktop/icon、AppImage `APPDIR`、目标 PID 进程根、`_NET_WM_ICON`、`WM_HINTS` 的现有优先级；不得为了 Zen Browser 重写或删减已经让 kitty、BlueMail、Edge 正常工作的路径。
+- 浏览器预览：继续保留已有 `cached_snapshot`、XDamage、viewable/workspace 保护；README 仍把浏览器偶发黑屏列为已知兼容性问题，不把当前缓解逻辑描述成已经彻底解决所有浏览器黑屏。
+- 后续处理：除非拿到新的可核实线索，例如 Zen Browser 实际 `WM_CLASS`、desktop 文件内容、容器内图标真实路径或 X11 图标属性，否则不再针对 Zen Browser 做猜测性代码修改。
+- 验证：本次仅整理文档，没有代码行为变化，因此不需要新增构建验证；未手动触发、重跑或监控 GitHub Actions。
