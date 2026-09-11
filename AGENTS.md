@@ -36,12 +36,17 @@ FastTab 是 `LBognanni/fasttab` 的维护分支，主要面向 Linux X11 环境�
 - 不应重新加入 Firefox、Edge、Remmina、root framebuffer 等基于应用名称的专用捕获规则，除非用户明确要求且有可核实的技术原因。
 - FastTab 隐藏时释放 XComposite/GLX 绑定，再次显示时重新获取最新 backing pixmap。
 - 缓存截图只作为跨工作区或窗口暂时未映射时的兜底，不应取代正常实时预览。
+- 已有有效 `cached_snapshot` 时，GLX reacquire 成功本身不能立即把可能为黑帧的纹理提升为 live；必须等到真实 XDamage 后完成 rebind 才恢复实时预览。
+- 已知位于其他工作区或当前不可见的窗口不得覆盖已有有效缓存截图；修复其他功能时不得回退这条浏览器黑屏保护。
 
 ### 应用图标
 
 - 优先使用宿主系统 `.desktop` / icon 解析。
 - 宿主图标解析失败后，可以从运行中的 AppImage `APPDIR`、`.desktop`、`StartupWMClass`、`.DirIcon` 或 AppImage 内置图标做通用回退。
-- 当前 AppImage 图标回退是泛化机制，不得改成 kitty 或其他单个应用专用判断。
+- 对 RunImage / 容器内进程，如果宿主没有对应 desktop/icon，可在 AppImage 回退之后仅按目标窗口 PID 从 `/proc/<pid>/root` 读取该进程根目录中的标准 desktop、hicolor 和 pixmaps 图标；不得扫描无关进程。
+- `_NET_WM_ICON` 与 ICCCM `WM_HINTS` 的 `IconPixmapHint` / `IconMaskHint` 保留为 X11 最终回退。
+- 当前 AppImage、进程根目录和 X11 图标回退都必须保持泛化机制，不得改成 kitty、BlueMail、Edge、Zen Browser 或其他单个应用专用判断。
+- kitty、BlueMail、Edge 当前已经在真实 Linux 环境显示小图标，属于已确认基线；后续修复其他应用图标时不得重写或删减这些已生效路径。
 
 ### CLI
 
@@ -203,12 +208,16 @@ LBognanni/fasttab
 
 1. 宿主系统 desktop / icon。
 2. 通用 AppImage `APPDIR` 回退。
-3. 如果仍无法解析，再根据真实缺失原因设计新的通用回退。
+3. 目标窗口 PID 对应的 `/proc/<pid>/root` 中标准 desktop / hicolor / pixmaps 回退，仅用于宿主不可见的 RunImage / 容器图标。
+4. X11 `_NET_WM_ICON`。
+5. ICCCM `WM_HINTS` 的 `IconPixmapHint` / `IconMaskHint`。
 
 要求：
 
-- 不得写 `if app_name == "kitty"`、`firefox`、`edge` 等应用专用补丁作为默认解决方案。
+- 不得写 `if app_name == "kitty"`、`firefox`、`edge`、`zen` 等应用专用补丁作为默认解决方案。
 - 新增图标路径时必须考虑绝对路径、相对路径、desktop `Icon=`、`StartupWMClass` 和 AppImage `.DirIcon` 的实际语义。
+- `/proc/<pid>/root` 回退只能读取目标窗口自身 PID 的进程根目录，不得遍历其他进程；容器内绝对图标符号链接必须仍在该目标进程根目录语义下解析，不能错误回到宿主绝对路径。
+- 修复新的缺图标应用时不得改坏已经实机确认的 kitty、BlueMail、Edge 图标路径，也不得改变既有 `_NET_WM_ICON` / `WM_HINTS` 最终回退顺序。
 - 不得扫描或读取与图标解析无关的用户私有文件。
 
 ## 9. AppImage 与打包规则

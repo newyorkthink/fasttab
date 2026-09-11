@@ -164,3 +164,14 @@
 - 验证：新增纯逻辑测试覆盖 WM_HINTS flags / pixmap / mask 解析和 TrueColor channel mask 缩放；静态核对 XCB pixmap 尺寸限制、像素数量上限、mask 生命周期及 worker 图标缓存所有权。当前执行环境没有 Zig 编译器，因此不宣称本地测试、ReleaseSafe 构建或 GUI 实机验证通过；BlueMail 最终显示仍待 Linux/i3 实机确认。
 - Actions：未修改 workflow；未手动触发、重跑或监控 GitHub Actions。
 - 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；本次没有上游新提交需要采用。
+
+### 固化已确认基线并补充 RunImage / 容器进程根图标回退
+
+- 状态：kitty、BlueMail、Edge 小图标已由真实 Linux 环境确认正常；Zen Browser 小图标本次修复待实机确认。父提交 `1123b5d0f3b7d71dca85f18e76860737b0c672fc` 的 Actions #214 已成功。
+- 修改文件：`src/desktop_icon.zig`、`AGENTS.md`、`README.md`、`README.zh-CN.md`、`CHANGELOG.md`。
+- 当前现象：同一个 browser RunImage 中 Edge 已能显示小图标，但 Zen Browser 在 FastTab 中没有小图标；同机 alttab 也没有 Zen Browser 小图标。当前截图中浏览器窗口预览已经可见，因此本次不改 `src/app.zig`、GLX 生命周期、缓存截图、XDamage 或窗口排序逻辑。
+- 根因：browser RunImage 把浏览器及其 desktop/icon 安装在容器内；`RIM_SHARE_ICONS=1` 是把宿主图标共享进容器，并不能让宿主 FastTab 的 XDG desktop/icon 扫描自动看到容器内部文件。现有 FastTab 在宿主 desktop/icon、AppImage `APPDIR` 之后直接进入 `_NET_WM_ICON` / `WM_HINTS`，缺少“只读取目标窗口进程自身容器根目录”的通用路径。alttab 同样缺失 Zen 图标，因此本次不再以 alttab 是否显示作为继续修改既有 WM_HINTS 路径的依据。
+- 修改内容：保留已经生效的宿主 desktop/icon、AppImage、`_NET_WM_ICON`、`WM_HINTS` 顺序和实现不变，仅在 AppImage 回退失败后新增目标 PID 的 `/proc/<pid>/root` 回退；在该进程根目录中复用现有 desktop 文件 ID、`StartupWMClass`、qualified desktop ID、WM_CLASS 直接图标名、hicolor 尺寸和 pixmaps 规则。容器内绝对图标符号链接按目标进程根目录语义解析，不错误跳回宿主绝对路径。运行逻辑不包含 Zen、Edge、BlueMail、kitty 等应用名称，也不遍历其他进程。
+- 基线固化：`AGENTS.md` 明确记录已确认的浏览器黑帧缓存保护，以及 kitty、BlueMail、Edge 图标属于不得无故回退的稳定行为；图标优先级固定为“宿主 desktop/icon → AppImage `APPDIR` → 目标 PID 进程根 desktop/icon → `_NET_WM_ICON` → `WM_HINTS`”。
+- 验证：新增纯逻辑文件系统测试，用通用容器应用名构造目标根目录、desktop、hicolor 图标和指向容器 `/opt/...` 的绝对符号链接，覆盖进程根解析的关键路径；同时完整复核 `src/desktop_icon.zig`、`src/x11.zig`、`src/worker.zig` 的调用顺序。当前连接器执行环境没有 Zig 编译器，因此不宣称本次新代码已经本地构建或实机验证通过；未修改 workflow，也不手动触发、重跑或监控 Actions。
+- 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；父提交相对上游为 `ahead 139 / behind 0`，merge base 为该上游 HEAD，没有新上游提交需要采用。

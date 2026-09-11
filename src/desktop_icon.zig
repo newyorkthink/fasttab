@@ -50,6 +50,7 @@ pub fn getAppIcon(allocator: mem.Allocator, app_names: []const []const u8, targe
     // Never scan unrelated processes or require a matching desktop filename.
     if (pid) |process_id| {
         if (try getProcessAppImageIcon(allocator, process_id)) |icon| return icon;
+        if (try getProcessRootIcon(allocator, process_id, app_names, target_size)) |icon| return icon;
     }
     return error.IconFileNotFound;
 }
@@ -539,4 +540,204 @@ test "AppImage fallback reads only the supplied process APPDIR" {
     defer icon.deinit();
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, icon.pixels);
     try std.testing.expect((try getProcessAppImageIcon(allocator, 0)) == null);
+}
+
+fn getProcessRootIcon(
+    allocator: mem.Allocator,
+    pid: std.posix.pid_t,
+    app_names: []const []const u8,
+    target_size: u32,
+) !?IconResult {
+    if (pid <= 0) return null;
+    const root_path = try std.fmt.allocPrint(allocator, "/proc/{d}/root", .{pid});
+    defer allocator.free(root_path);
+    return loadRootedAppIcon(allocator, root_path, app_names, target_size);
+}
+
+fn loadRootedAppIcon(
+    allocator: mem.Allocator,
+    root_path: []const u8,
+    app_names: []const []const u8,
+    target_size: u32,
+) !?IconResult {
+    var root = fs.openDirAbsolute(root_path, .{}) catch return null;
+    defer root.close();
+
+    for (app_names) |app_name| {
+        if (app_name.len == 0 or mem.eql(u8, app_name, "(unknown)")) continue;
+
+        if (try findRootedIconNameFromDesktop(allocator, root, app_name)) |icon_id| {
+            defer allocator.free(icon_id);
+            if (fs.path.isAbsolute(icon_id)) {
+                if (try loadRootedPng(allocator, root, root_path, icon_id)) |icon| return icon;
+            } else if (try resolveRootedIcon(allocator, root, root_path, icon_id, target_size)) |icon| {
+                return icon;
+            }
+        }
+
+        const direct_icon_id = try normalizedAppIconName(allocator, app_name);
+        defer allocator.free(direct_icon_id);
+        if (direct_icon_id.len > 0) {
+            if (try resolveRootedIcon(allocator, root, root_path, direct_icon_id, target_size)) |icon| return icon;
+        }
+    }
+
+    return null;
+}
+
+fn findRootedIconNameFromDesktop(
+    allocator: mem.Allocator,
+    root: fs.Dir,
+    app_name: []const u8,
+) !?[]const u8 {
+    const search_dirs = [_][]const u8{ "usr/local/share/applications", "usr/share/applications" };
+
+    for (search_dirs) |base| {
+        var dir = root.openDir(base, .{ .iterate = true }) catch continue;
+        defer dir.close();
+        var dir_iter = dir.iterate();
+        while (dir_iter.next() catch null) |entry| {
+            if (!desktopFileMatchesAppName(entry.name, app_name)) continue;
+            if (try scanDesktopForIcon(allocator, dir, entry.name, null)) |icon| return icon;
+        }
+    }
+
+    for (search_dirs) |base| {
+        var dir = root.openDir(base, .{ .iterate = true }) catch continue;
+        defer dir.close();
+        var dir_iter = dir.iterate();
+        while (dir_iter.next() catch null) |entry| {
+            if (!mem.endsWith(u8, entry.name, ".desktop")) continue;
+            if (try scanDesktopForIcon(allocator, dir, entry.name, app_name)) |icon| return icon;
+        }
+    }
+
+    for (search_dirs) |base| {
+        var dir = root.openDir(base, .{ .iterate = true }) catch continue;
+        defer dir.close();
+        var dir_iter = dir.iterate();
+        while (dir_iter.next() catch null) |entry| {
+            if (!desktopFileQualifiedMatchesAppName(entry.name, app_name)) continue;
+            if (try scanDesktopForIcon(allocator, dir, entry.name, null)) |icon| return icon;
+        }
+    }
+
+    return null;
+}
+
+fn resolveRootedIcon(
+    allocator: mem.Allocator,
+    root: fs.Dir,
+    root_path: []const u8,
+    icon_id: []const u8,
+    target_size: u32,
+) !?IconResult {
+    const icon_filename = try pngIconFilename(allocator, icon_id);
+    defer allocator.free(icon_filename);
+
+    var start_idx: usize = 0;
+    const target_str = try std.fmt.allocPrint(allocator, "{d}x{d}", .{ target_size, target_size });
+    defer allocator.free(target_str);
+    for (ICON_SIZES, 0..) |size_str, i| {
+        if (mem.eql(u8, size_str, target_str)) {
+            start_idx = i;
+            break;
+        }
+    }
+
+    const data_roots = [_][]const u8{ "usr/local/share", "usr/share" };
+
+    for (ICON_SIZES[start_idx..]) |size_dir| {
+        for (data_roots) |data_root| {
+            const logical = try fs.path.join(allocator, &.{ data_root, "icons/hicolor", size_dir, "apps", icon_filename });
+            defer allocator.free(logical);
+            if (try loadRootedPng(allocator, root, root_path, logical)) |icon| return icon;
+        }
+    }
+
+    var lower_idx = start_idx;
+    while (lower_idx > 0) {
+        lower_idx -= 1;
+        const size_dir = ICON_SIZES[lower_idx];
+        for (data_roots) |data_root| {
+            const logical = try fs.path.join(allocator, &.{ data_root, "icons/hicolor", size_dir, "apps", icon_filename });
+            defer allocator.free(logical);
+            if (try loadRootedPng(allocator, root, root_path, logical)) |icon| return icon;
+        }
+    }
+
+    for (data_roots) |data_root| {
+        const logical = try fs.path.join(allocator, &.{ data_root, "pixmaps", icon_filename });
+        defer allocator.free(logical);
+        if (try loadRootedPng(allocator, root, root_path, logical)) |icon| return icon;
+    }
+
+    return null;
+}
+
+fn loadRootedPng(
+    allocator: mem.Allocator,
+    root: fs.Dir,
+    root_path: []const u8,
+    logical_path: []const u8,
+) !?IconResult {
+    return loadRootedPngDepth(allocator, root, root_path, logical_path, 0);
+}
+
+fn loadRootedPngDepth(
+    allocator: mem.Allocator,
+    root: fs.Dir,
+    root_path: []const u8,
+    logical_path: []const u8,
+    depth: u8,
+) !?IconResult {
+    if (depth >= 8) return null;
+    const relative_path = mem.trimLeft(u8, logical_path, "/");
+    if (relative_path.len == 0) return null;
+
+    var link_buf: [fs.max_path_bytes]u8 = undefined;
+    if (root.readLink(relative_path, &link_buf)) |target| {
+        const resolved_relative = if (fs.path.isAbsolute(target))
+            try allocator.dupe(u8, mem.trimLeft(u8, target, "/"))
+        else if (fs.path.dirname(relative_path)) |parent|
+            try fs.path.join(allocator, &.{ parent, target })
+        else
+            try allocator.dupe(u8, target);
+        defer allocator.free(resolved_relative);
+        return loadRootedPngDepth(allocator, root, root_path, resolved_relative, depth + 1);
+    } else |_| {}
+
+    const candidate = try fs.path.join(allocator, &.{ root_path, relative_path });
+    defer allocator.free(candidate);
+    if (loadPng(candidate)) |icon| return icon else |_| {}
+    return null;
+}
+
+test "rooted desktop lookup keeps absolute icon symlinks inside the target root" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("usr/share/applications");
+    try tmp.dir.makePath("usr/share/icons/hicolor/64x64/apps");
+    try tmp.dir.makePath("opt/container-app/browser/chrome/icons/default");
+    try tmp.dir.writeFile(.{
+        .sub_path = "usr/share/applications/container-app.desktop",
+        .data = "[Desktop Entry]\nIcon=container-app-icon\nStartupWMClass=ContainerApp\n",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "opt/container-app/browser/chrome/icons/default/default64.png",
+        .data = test_png,
+    });
+    try tmp.dir.symLink(
+        "/opt/container-app/browser/chrome/icons/default/default64.png",
+        "usr/share/icons/hicolor/64x64/apps/container-app-icon.png",
+        .{},
+    );
+
+    const root_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root_path);
+    var icon = (try loadRootedAppIcon(allocator, root_path, &.{"ContainerApp"}, 64)).?;
+    defer icon.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, icon.pixels);
 }
