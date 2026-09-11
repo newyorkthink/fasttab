@@ -97,3 +97,15 @@
 - 验证：独立工作目录完成 Zig 测试及 ReleaseSafe 构建；新增测试覆盖双 WM_CLASS、APPDIR 解析、目录边界、desktop action 隔离、无 desktop 的 `.DirIcon`、绝对符号链接、内嵌主题 PNG，以及受控子进程 PID 回退。真实 Linux GUI 中 kitty 的最终显示仍待确认，CI 状态以本提交 Actions 结果为准。
 - 限制：保留现有 STB 解码能力，未新增 SVG/XPM 解码；原有浏览器预览已知问题不在本次修复范围内。
 - 上游核查：`LBognanni/fasttab` 当前 `main` HEAD 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；修改前本仓库相对上游为 `ahead 127 / behind 0`，merge base 为该上游 HEAD。没有新提交需要采用，不重复合并，不改变现有窗口切换、实时预览、CLI 和 Release 基线。
+
+### 确认图标修复并调整工作区排序与占位底色
+
+- 状态：kitty 图标修复实机确认；本次排序和占位样式待实机确认。
+- 已确认基线：用户确认 `222e945bb63406235247dcf393337dde19614708` 修复了 kitty 图标，本次不再改动图标解析。
+- 修改文件：`src/app.zig`、`src/ui.zig`、`src/tests/app_filter_test.zig`、`README.md`、`README.zh-CN.md`、`AGENTS.md`、`CHANGELOG.md`。
+- 原因：全局 MRU 排序会拆散同一工作区的窗口；没有预览时的近黑色占位卡片过暗。
+- 修改内容：当前工作区优先，其他工作区按与顶部标签一致的 EWMH 索引稳定分组，组内保留 MRU 顺序；跨全部工作区的 sticky 窗口归入优先组，缺少工作区信息的窗口放在最后。打开前刷新工作区信息，后续分组保留当前选中的窗口身份。
+- 样式：仅将没有实时预览且没有缓存画面的占位底色改为半透明中灰（RGBA 128/128/128/128），保留图标和标题；不更改有效预览、着色器的 Alpha 修复或 GLX 生命周期，不把真实黑色画面误判为空白。
+- 验证：本地排序回归测试覆盖交错工作区、组内顺序、sticky/未知工作区、当前工作区变化和选中窗口保持；执行现有完整测试与 ReleaseSafe 构建，GUI 样式仍待实机确认。
+- Actions：按用户要求，今后默认本地检查、提交和推送后结束，不手动触发、重跑或监控 Actions；本次未修改 workflow，不宣称 CI 或 Release 已完成。
+- 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`，本次修改前 `ahead 128 / behind 0`，merge base 为该 HEAD；无新提交需要采用。

@@ -777,7 +777,7 @@ pub fn renderSwitcher(
                 };
                 rl.DrawTexturePro(snapshot.texture, snap_src, dest_rect, rl.Vector2{ .x = 0, .y = 0 }, 0, rl.WHITE);
             } else {
-                const fallback_bg = rl.Color{ .r = 0x18, .g = 0x18, .b = 0x18, .a = 230 };
+                const fallback_bg = rl.Color{ .r = 0x80, .g = 0x80, .b = 0x80, .a = 128 };
                 rl.DrawRectangleRounded(dest_rect, 0.06, 6, fallback_bg);
 
                 if (item.icon_texture) |icon_tex| {

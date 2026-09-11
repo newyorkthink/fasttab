@@ -465,6 +465,7 @@ pub const App = struct {
         self.temp_tasks.clearRetainingCapacity();
 
         if (any_changes) {
+            if (!self.window_hidden) self.groupWorkspacesPreservingSelection();
             if (self.switch_mode == .current_workspace) {
                 self.buildCurrentWorkspaceItems();
 
@@ -572,6 +573,7 @@ pub const App = struct {
 
         self.refreshWorkspaceInfo();
         self.refreshItemWorkspaces();
+        self.groupWorkspacesPreservingSelection();
 
         self.current_layout = ui.calculateBestLayoutForMonitor(
             self.displayItems(),
@@ -653,7 +655,10 @@ pub const App = struct {
             self.recordMruActivation(active_win);
         }
 
+        self.refreshWorkspaceInfo();
+        self.refreshItemWorkspaces();
         self.reorderByMru();
+        groupItemsByWorkspace(self.items.items, self.current_workspace);
 
         const n = self.items.items.len;
         if (n == 0) {
@@ -1385,6 +1390,17 @@ pub const App = struct {
         }
     }
 
+    fn groupWorkspacesPreservingSelection(self: *Self) void {
+        if (self.switch_mode != .all_windows) return;
+        const selected_id = if (self.selected_index < self.items.items.len)
+            self.items.items[self.selected_index].id
+        else
+            0;
+        groupItemsByWorkspace(self.items.items, self.current_workspace);
+        if (self.findItemIndexByWindowId(selected_id)) |index| self.selected_index = index;
+        self.mouseover_index = null;
+    }
+
     /// Returns the slice used by rendering and navigation.
     pub fn displayItems(self: *Self) []ui.DisplayWindow {
         return switch (self.switch_mode) {
@@ -1505,6 +1521,22 @@ pub const App = struct {
         }
     }
 };
+
+/// Stable grouping preserves MRU order within each workspace.
+/// EWMH desktop indices follow the same order as the workspace label bar.
+pub fn groupItemsByWorkspace(items: []DisplayWindow, current_workspace: ?u32) void {
+    std.sort.insertion(DisplayWindow, items, current_workspace, struct {
+        fn rank(workspace: ?u32, current: ?u32) u64 {
+            const desktop = workspace orelse return std.math.maxInt(u64);
+            if (desktop == 0xFFFFFFFF or (current != null and desktop == current.?)) return 0;
+            return @as(u64, desktop) + 1;
+        }
+
+        fn lessThan(current: ?u32, a: DisplayWindow, b: DisplayWindow) bool {
+            return rank(a.workspace, current) < rank(b.workspace, current);
+        }
+    }.lessThan);
+}
 
 /// Filter DisplayWindow items by workspace.
 /// Sticky windows and windows without workspace metadata remain switchable.
@@ -1657,4 +1689,25 @@ test "failed window append leaves task strings owned until cleanup" {
     try std.testing.expect(failing.has_induced_failure);
     try std.testing.expectEqual(@as(usize, 0), application.items.items.len);
     try std.testing.expectEqual(@as(usize, 0), application.temp_tasks.items.len);
+}
+
+test "regrouping preserves the selected window after workspace refresh" {
+    var application: App = undefined;
+    application.items = std.ArrayList(DisplayWindow).init(std.testing.allocator);
+    defer application.items.deinit();
+    application.switch_mode = .all_windows;
+    application.current_workspace = 1;
+    application.selected_index = 1;
+    application.mouseover_index = 0;
+    var item = std.mem.zeroes(DisplayWindow);
+    item.id = 10;
+    item.workspace = 2;
+    try application.items.append(item);
+    item.id = 20;
+    item.workspace = 1;
+    try application.items.append(item);
+    application.groupWorkspacesPreservingSelection();
+    try std.testing.expectEqual(@as(u32, 20), application.items.items[application.selected_index].id);
+    try std.testing.expectEqual(@as(usize, 0), application.selected_index);
+    try std.testing.expect(application.mouseover_index == null);
 }
