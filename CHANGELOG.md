@@ -131,3 +131,14 @@
 - 验证：新增纯函数回归测试覆盖 desktop ID 大小写匹配、已有 PNG 扩展名保留及 `1024x1024` 尺寸表；并重新核对 `src/x11.zig`、`src/worker.zig` 和 `build.zig` 的调用/测试入口。当前连接器会话没有可用的 Zig 本地编译环境，因此仅完成静态检查，不宣称本地测试或 GUI 实机验证通过；BlueMail 最终显示仍待实机确认。
 - Actions：未修改 workflow；按仓库约定不手动触发、重跑或监控 GitHub Actions。
 - 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；本次修改前本仓库相对上游为 `ahead 130 / behind 0`，merge base 为该上游 HEAD，无新提交需要采用。
+
+### 补齐 alttab 的 WM_CLASS 直接图标匹配
+
+- 状态：待实机确认。
+- 修改文件：`src/desktop_icon.zig`、`CHANGELOG.md`。
+- 原始现象：用户实机确认上一版宿主 desktop ID / 大尺寸图标修复后，BlueMail 在 FastTab 中仍没有小图标，而同一环境中的 alttab 能正常显示；因此上一条 BlueMail 根因判断并不完整。
+- 根因：重新逐行对照 `newyorkthink/linux-packaging/alttab/patches/desktop-icons.patch` 后确认，alttab 不只依赖 desktop 文件 ID 和 `StartupWMClass`：它会先把窗口 app / WM_CLASS 转成小写，直接在已扫描的宿主图标文件索引中查找同名图标，再回退到 desktop 元数据映射。FastTab 此前缺少这条“WM_CLASS → 图标文件名”的直接路径，所以即使系统已有同名 hicolor / pixmaps PNG，只要 desktop 关联不命中，仍会漏图标。
+- 修改内容：保留现有 desktop 映射优先级，在每个窗口实例名 / 应用类名的 desktop 查找失败或图标加载失败后，新增与 alttab 等价的通用小写名称直接查找，复用现有 XDG hicolor / pixmaps 路径和尺寸策略；同时在精确 desktop ID 与 `StartupWMClass` 之后增加限定分隔符的 qualified desktop ID 尾段匹配，用于包名、vendor、reverse-DNS 或 sandbox 前缀的 desktop ID，不把任何具体应用名称写入运行逻辑。既有 kitty、AppImage `APPDIR` 和 `_NET_WM_ICON` 回退顺序保持不变。
+- 验证：新增纯函数回归测试覆盖 WM_CLASS 小写归一化、带 `.desktop` 后缀归一化、qualified desktop ID 的 `_` / `-` / `.` 尾段匹配以及无分隔符误匹配拒绝；并完整复核 `src/desktop_icon.zig`、`src/x11.zig`、`src/worker.zig`、`build.zig` 与 alttab 两份图标补丁的调用链。当前连接器会话没有可用的 Zig 本地编译环境，因此不宣称本地测试、ReleaseSafe 构建或 GUI 实机验证通过；最终效果仍需 Linux/i3 实机确认。
+- Actions：未修改 workflow；按仓库约定不手动触发、重跑或监控 GitHub Actions。
+- 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；本次修改前本仓库相对上游为 `ahead 132 / behind 0`，merge base 为该上游 HEAD，无新提交需要采用。

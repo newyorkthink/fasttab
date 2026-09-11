@@ -32,6 +32,18 @@ pub fn getAppIcon(allocator: mem.Allocator, app_names: []const []const u8, targe
                 if (loadPng(icon_path)) |icon| return icon else |_| {}
             }
         }
+
+        // AltTab also indexes host icon files directly by the lower-cased app/WM_CLASS
+        // name before relying on desktop metadata. Keep desktop mapping preferred here,
+        // but use the same generic direct-name fallback when metadata is absent or stale.
+        const direct_icon_id = try normalizedAppIconName(allocator, app_name);
+        defer allocator.free(direct_icon_id);
+        if (direct_icon_id.len > 0) {
+            if (try resolveIconPath(allocator, direct_icon_id, target_size)) |icon_path| {
+                defer allocator.free(icon_path);
+                if (loadPng(icon_path)) |icon| return icon else |_| {}
+            }
+        }
     }
 
     // The window PID identifies the AppImage, even with a custom WM_CLASS.
@@ -173,18 +185,49 @@ fn xdgDataHome(allocator: mem.Allocator) ![]const u8 {
     return fs.path.join(allocator, &.{ home, ".local/share" });
 }
 
+fn appNameStem(app_name: []const u8) []const u8 {
+    const suffix = ".desktop";
+    if (app_name.len > suffix.len and
+        std.ascii.eqlIgnoreCase(app_name[app_name.len - suffix.len ..], suffix))
+    {
+        return app_name[0 .. app_name.len - suffix.len];
+    }
+    return app_name;
+}
+
+fn normalizedAppIconName(allocator: mem.Allocator, app_name: []const u8) ![]u8 {
+    const stem = appNameStem(app_name);
+    const normalized = try allocator.alloc(u8, stem.len);
+    for (stem, 0..) |ch, i| {
+        normalized[i] = if (ch >= 'A' and ch <= 'Z') ch + ('a' - 'A') else ch;
+    }
+    return normalized;
+}
+
 fn desktopFileMatchesAppName(filename: []const u8, app_name: []const u8) bool {
     const suffix = ".desktop";
     if (filename.len <= suffix.len) return false;
     if (!std.ascii.eqlIgnoreCase(filename[filename.len - suffix.len ..], suffix)) return false;
 
     const file_id = filename[0 .. filename.len - suffix.len];
-    const app_id = if (app_name.len > suffix.len and
-        std.ascii.eqlIgnoreCase(app_name[app_name.len - suffix.len ..], suffix))
-        app_name[0 .. app_name.len - suffix.len]
-    else
-        app_name;
-    return std.ascii.eqlIgnoreCase(file_id, app_id);
+    return std.ascii.eqlIgnoreCase(file_id, appNameStem(app_name));
+}
+
+fn desktopFileQualifiedMatchesAppName(filename: []const u8, app_name: []const u8) bool {
+    const suffix = ".desktop";
+    if (filename.len <= suffix.len) return false;
+    if (!std.ascii.eqlIgnoreCase(filename[filename.len - suffix.len ..], suffix)) return false;
+
+    const file_id = filename[0 .. filename.len - suffix.len];
+    const app_id = appNameStem(app_name);
+    if (app_id.len == 0 or file_id.len <= app_id.len) return false;
+
+    const start = file_id.len - app_id.len;
+    if (!std.ascii.eqlIgnoreCase(file_id[start..], app_id)) return false;
+    return switch (file_id[start - 1]) {
+        '.', '-', '_' => true,
+        else => false,
+    };
 }
 
 fn findIconNameFromDesktop(allocator: mem.Allocator, app_name: []const u8) !?[]const u8 {
@@ -233,6 +276,20 @@ fn findIconNameFromDesktop(allocator: mem.Allocator, app_name: []const u8) !?[]c
             if (try scanDesktopForIcon(allocator, dir, entry.name, app_name)) |icon| {
                 return icon;
             }
+        }
+    }
+
+    // Pass 3: some launchers qualify desktop IDs (for example package, vendor,
+    // reverse-DNS, or sandbox prefixes). Only accept a delimited final component,
+    // and keep this after exact ID/StartupWMClass so existing mappings win.
+    for (search_dirs.items) |base| {
+        if (!fs.path.isAbsolute(base)) continue;
+        var dir = fs.openDirAbsolute(base, .{ .iterate = true }) catch continue;
+        defer dir.close();
+        var dir_iter = dir.iterate();
+        while (dir_iter.next() catch null) |entry| {
+            if (!desktopFileQualifiedMatchesAppName(entry.name, app_name)) continue;
+            if (try scanDesktopForIcon(allocator, dir, entry.name, null)) |icon| return icon;
         }
     }
 
@@ -350,6 +407,25 @@ test "desktop filename matching is case-insensitive" {
     try std.testing.expect(desktopFileMatchesAppName("MailClient.desktop", "mailclient.desktop"));
     try std.testing.expect(!desktopFileMatchesAppName("other.desktop", "MailClient"));
     try std.testing.expect(!desktopFileMatchesAppName("mailclient.txt", "MailClient"));
+}
+
+test "qualified desktop IDs match only a delimited app suffix" {
+    try std.testing.expect(desktopFileQualifiedMatchesAppName("package_mailclient.desktop", "MailClient"));
+    try std.testing.expect(desktopFileQualifiedMatchesAppName("org.example.MailClient.desktop", "mailclient"));
+    try std.testing.expect(desktopFileQualifiedMatchesAppName("vendor-MailClient.desktop", "MailClient.desktop"));
+    try std.testing.expect(!desktopFileQualifiedMatchesAppName("notmailclient.desktop", "MailClient"));
+    try std.testing.expect(!desktopFileQualifiedMatchesAppName("mailclient.desktop", "MailClient"));
+}
+
+test "direct host icon lookup normalizes WM_CLASS like alttab" {
+    const allocator = std.testing.allocator;
+    const mixed = try normalizedAppIconName(allocator, "MailClient");
+    defer allocator.free(mixed);
+    try std.testing.expectEqualStrings("mailclient", mixed);
+
+    const desktop = try normalizedAppIconName(allocator, "MailClient.desktop");
+    defer allocator.free(desktop);
+    try std.testing.expectEqualStrings("mailclient", desktop);
 }
 
 test "PNG icon filename preserves an existing extension" {
