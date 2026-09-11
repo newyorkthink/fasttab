@@ -1702,9 +1702,9 @@ test "reacquisition skips known off-workspace windows" {
 }
 
 test "reacquired texture waits for damage when a fallback snapshot exists" {
-    try std.testing.expect(canPromoteReacquiredTexture(null));
+try std.testing.expect(App.canPromoteReacquiredTexture(null));
     const snapshot = std.mem.zeroes(rl.RenderTexture2D);
-    try std.testing.expect(!canPromoteReacquiredTexture(snapshot));
+try std.testing.expect(!App.canPromoteReacquiredTexture(snapshot));
 }
 
 test "failed window append leaves task strings owned until cleanup" {
