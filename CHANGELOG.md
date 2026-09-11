@@ -109,3 +109,14 @@
 - 验证：本地排序回归测试覆盖交错工作区、组内顺序、sticky/未知工作区、当前工作区变化和选中窗口保持；执行现有完整测试与 ReleaseSafe 构建，GUI 样式仍待实机确认。
 - Actions：按用户要求，今后默认本地检查、提交和推送后结束，不手动触发、重跑或监控 Actions；本次未修改 workflow，不宣称 CI 或 Release 已完成。
 - 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`，本次修改前 `ahead 128 / behind 0`，merge base 为该 HEAD；无新提交需要采用。
+
+### 修复跨工作区后浏览器预览灰屏/黑屏
+
+- 状态：待实机确认。
+- 修改文件：`src/app.zig`、`CHANGELOG.md`。
+- 原始现象：Chrome、Vivaldi、Firefox 等窗口在一个 i3 工作区中已经显示过正常缩略图后，切换到其他工作区再打开 FastTab，原有预览可能退化为灰色占位或黑色画面。
+- 根因：GLX 渐进重获取和截图缓存没有把窗口是否仍为 X11 `VIEWABLE` 作为前置条件，i3 已经 unmap 的跨工作区窗口仍可能被重新绑定并标记为实时预览；无效或黑色 backing pixmap 随后还可能覆盖原有 `cached_snapshot`。跨工作区确认切换时又先激活目标窗口、后执行隐藏阶段批量截图，旧工作区可能已被 i3 unmap 才开始保存最后一帧。
+- 修改内容：仅对当前仍 mapped/viewable 的窗口创建或重获取实时 GLX 纹理、处理 damage 和更新 snapshot；已知位于其他工作区的窗口不进入 pending reacquire，并继续使用最后一张有效缓存；不可见窗口禁止覆盖已有缓存。跨工作区激活目标窗口前先缓存当前仍可见窗口，隐藏状态下为活动窗口临时重获取的 GLX 绑定在截图后立即释放，新加入窗口也不再在 FastTab 隐藏期间建立绑定。
+- 验证：已完整核对 `src/app.zig`、`src/x11.zig`、`src/ui.zig`、`src/main.zig` 的调用链、XComposite/GLX 资源生命周期和相关测试逻辑，并更新重获取选择测试以覆盖“全局窗口列表中跳过已知其他工作区窗口”。当前连接器会话没有可用的 Zig 本地编译环境，因此不把静态检查描述为本地构建或 GUI 实机验证；真实 Linux/i3 下的浏览器预览效果仍待确认。
+- Actions：未修改 workflow；按仓库约定不手动触发、重跑或监控 GitHub Actions。
+- 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；本次修改前本仓库相对上游为 `ahead 129 / behind 0`，merge base 为该上游 HEAD，无新提交需要采用。

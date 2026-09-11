@@ -319,8 +319,10 @@ pub const App = struct {
                     var source_height: u32 = 0;
                     var has_texture = false;
 
-                    // Attempt to create GLX texture (may fail for minimized windows, etc.)
-                    if (!data.is_minimized) {
+                    // Keep the hidden daemon free of XComposite/GLX bindings.
+                    // A live texture is only useful while FastTab is visible and the
+                    // client itself is mapped on the active workspace.
+                    if (!self.window_hidden and !data.is_minimized and x11.isWindowViewable(self.conn.conn, data.window_id)) {
                         if (x11.createWindowTexture(self.conn, data.window_id)) |win_tex| {
                             texture = win_tex.toRaylibTexture();
                             source_width = win_tex.width;
@@ -338,7 +340,7 @@ pub const App = struct {
                         } else |err| {
                             log.debug("GLX texture failed for {x}: {}, showing icon fallback", .{ data.window_id, err });
                         }
-                    } else {
+                    } else if (data.is_minimized) {
                         log.debug("Minimized window {x}, showing icon fallback", .{data.window_id});
                     }
 
@@ -862,13 +864,29 @@ pub const App = struct {
 
         const display = self.displayItems();
         if (display.len > 0 and self.selected_index < display.len) {
-            const selected_id = display[self.selected_index].id;
+            const selected = display[self.selected_index];
+            const selected_id = selected.id;
             if (self.switch_origin_window != 0 and
                 self.switch_origin_window != selected_id and
                 !self.switch_origin_snapshot_ready)
             {
                 self.switch_origin_snapshot_ready = self.cacheSnapshotForWindow(self.switch_origin_window);
             }
+
+            const changes_workspace = if (self.current_workspace) |current|
+                if (selected.workspace) |workspace|
+                    workspace != 0xFFFFFFFF and workspace != current
+                else
+                    false
+            else
+                false;
+            if (changes_workspace and !self.window_hidden) {
+                // i3 unmaps the old workspace as soon as the target is activated.
+                // Save every still-viewable frame before that transition so the
+                // later hide pass cannot lose the last good cross-workspace preview.
+                self.cacheAllSnapshots();
+            }
+
             self.recordMruActivation(selected_id);
             x11.activateWindow(self.conn.conn, self.conn.root, selected_id, self.conn.atoms);
             log.debug("Confirmed: activating window {x}", .{selected_id});
@@ -943,6 +961,10 @@ pub const App = struct {
             _ = x11.xcb.xcb_damage_subtract(self.conn.conn, tex.damage, 0, 0);
 
             if (self.window_hidden) return;
+            if (!x11.isWindowViewable(self.conn.conn, drawable)) {
+                self.markThumbnailReady(drawable, false);
+                return;
+            }
 
             if (!tex.rebind(self.conn)) {
                 log.debug("GLX rebind failed for window {x}, reacquiring pixmap", .{drawable});
@@ -1028,6 +1050,12 @@ pub const App = struct {
         log.debug("Released {d} GLX bindings", .{self.window_textures.count()});
     }
 
+    fn isKnownOffWorkspace(self: *const Self, workspace: ?u32) bool {
+        const current = self.current_workspace orelse return false;
+        const desktop = workspace orelse return false;
+        return desktop != 0xFFFFFFFF and desktop != current;
+    }
+
     /// Refresh mapped windows in place. If GLX rejects a refresh, keep the old
     /// cached snapshot and let the progressive reacquire queue retry later.
     /// Ensure one visible origin window has a valid live texture before
@@ -1038,6 +1066,7 @@ pub const App = struct {
     fn cacheAllSnapshots(self: *Self) void {
         var cached_count: usize = 0;
         for (self.items.items) |*item| {
+            if (self.isKnownOffWorkspace(item.workspace)) continue;
             if (self.cacheSnapshotForItem(item)) cached_count += 1;
         }
         if (cached_count > 0) {
@@ -1047,7 +1076,9 @@ pub const App = struct {
 
     fn cacheSnapshotForWindow(self: *Self, window_id: x11.xcb.xcb_window_t) bool {
         const item = self.findItemByWindowId(window_id) orelse return false;
+        if (!x11.isWindowViewable(self.conn.conn, window_id)) return false;
 
+        const release_after_snapshot = self.window_hidden;
         if (!item.thumbnail_ready) {
             if (self.window_textures.getPtr(window_id)) |tex| {
                 if (!tex.bound and !tex.reacquire(self.conn)) return false;
@@ -1070,7 +1101,14 @@ pub const App = struct {
             }
         }
 
-        return self.cacheSnapshotForItem(item);
+        const cached = self.cacheSnapshotForItem(item);
+        if (release_after_snapshot) {
+            if (self.window_textures.getPtr(window_id)) |tex| {
+                if (tex.bound) tex.release(self.conn);
+            }
+            item.thumbnail_ready = false;
+        }
+        return cached;
     }
 
     /// Copy one live thumbnail into a replacement FBO. The previous snapshot is
@@ -1078,6 +1116,7 @@ pub const App = struct {
     fn cacheSnapshotForItem(self: *Self, item: *ui.DisplayWindow) bool {
         if (!item.thumbnail_ready or item.thumbnail_texture.id == 0) return false;
         if (item.display_width == 0 or item.display_height == 0) return false;
+        if (!x11.isWindowViewable(self.conn.conn, item.id)) return false;
 
         const rt = rl.LoadRenderTexture(@intCast(item.display_width), @intCast(item.display_height));
         if (rt.id == 0) return false;
@@ -1118,7 +1157,8 @@ pub const App = struct {
     const REACQUIRE_FRAME_BUDGET_NS: i128 = 10 * std.time.ns_per_ms;
 
     /// Incrementally reacquire GLX textures during update() to avoid blocking showWindow.
-    /// Each pending window is attempted at most once per frame; failures remain tracked.
+    /// Only mapped/viewable windows participate; cached snapshots stay authoritative
+    /// for windows that i3 has unmapped on another workspace.
     fn processReacquireQueue(self: *Self) void {
         if (!self.reacquire_pending or self.window_hidden) return;
 
@@ -1135,8 +1175,13 @@ pub const App = struct {
             const target_id = self.nextPendingReacquireWindowId(prefer_selected) orelse break;
             prefer_selected = false;
             attempts_remaining -= 1;
-            const window_start_ns = std.time.nanoTimestamp();
 
+            if (!x11.isWindowViewable(self.conn.conn, target_id)) {
+                self.markThumbnailReady(target_id, false);
+                continue;
+            }
+
+            const window_start_ns = std.time.nanoTimestamp();
             if (self.window_textures.getPtr(target_id)) |tex| {
                 if (!tex.reacquire(self.conn)) {
                     self.markThumbnailReady(target_id, false);
@@ -1217,15 +1262,13 @@ pub const App = struct {
 
     fn hasPendingReacquire(self: *Self) bool {
         for (self.items.items) |item| {
-            if (!item.thumbnail_ready) {
-                if (self.window_textures.getPtr(item.id)) |tex| {
-                    if (!tex.bound) {
-                        return true;
-                    }
-                } else {
-                    // No texture at all (minimized or initial creation failed) — needs acquire
-                    return true;
-                }
+            if (item.thumbnail_ready or self.isKnownOffWorkspace(item.workspace)) continue;
+            if (!x11.isWindowViewable(self.conn.conn, item.id)) continue;
+
+            if (self.window_textures.getPtr(item.id)) |tex| {
+                if (!tex.bound) return true;
+            } else {
+                return true;
             }
         }
         return false;
@@ -1238,7 +1281,7 @@ pub const App = struct {
         if (prefer_selected and self.selected_index < display.len) {
             const selected = display[self.selected_index];
             const index = self.findItemIndexByWindowId(selected.id) orelse return null;
-            if (!selected.thumbnail_ready) {
+            if (!self.isKnownOffWorkspace(selected.workspace) and !selected.thumbnail_ready) {
                 if (self.window_textures.getPtr(selected.id)) |tex| {
                     if (!tex.bound) {
                         self.reacquire_cursor = (index + 1) % self.items.items.len;
@@ -1256,7 +1299,7 @@ pub const App = struct {
         while (offset < self.items.items.len) : (offset += 1) {
             const index = (start + offset) % self.items.items.len;
             const item = self.items.items[index];
-            if (item.thumbnail_ready) continue;
+            if (item.thumbnail_ready or self.isKnownOffWorkspace(item.workspace)) continue;
 
             if (self.window_textures.getPtr(item.id)) |tex| {
                 if (!tex.bound) {
@@ -1627,7 +1670,7 @@ test "workspace layout uses refreshed source dimensions" {
     try std.testing.expectEqual(resized.display_width + 2 * ui.PADDING, application.current_layout.total_width);
 }
 
-test "workspace reacquisition prioritizes the selected window ID" {
+test "reacquisition skips known off-workspace windows" {
     var application: App = undefined;
     application.items = std.ArrayList(DisplayWindow).init(std.testing.allocator);
     defer application.items.deinit();
@@ -1651,7 +1694,7 @@ test "workspace reacquisition prioritizes the selected window ID" {
     try std.testing.expectEqual(@as(?u32, 20), application.nextPendingReacquireWindowId(true));
 
     application.switch_mode = .all_windows;
-    try std.testing.expectEqual(@as(?u32, 10), application.nextPendingReacquireWindowId(true));
+    try std.testing.expectEqual(@as(?u32, 20), application.nextPendingReacquireWindowId(true));
 }
 
 test "failed window append leaves task strings owned until cleanup" {
