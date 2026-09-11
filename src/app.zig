@@ -49,6 +49,7 @@ pub const App = struct {
     font: rl.Font,
     monitor: MonitorInfo,
     window_hidden: bool,
+    next_icon_visibility_check_ms: i64 = 0,
     daemon_mode: bool,
     should_quit: bool,
     update_queue: ?*worker.TaskQueue,
@@ -561,6 +562,7 @@ pub const App = struct {
     /// Show the switcher window (public for socket commands)
     /// Show the switcher window (public for socket commands)
     pub fn showWindow(self: *Self) void {
+        self.refreshIconVisibility();
         const start_ns = std.time.nanoTimestamp();
         log.debug("Showing window with {d} items", .{self.displayItems().len});
 
@@ -1488,6 +1490,7 @@ pub const App = struct {
             fi.thumbnail_texture = src.thumbnail_texture;
             fi.cached_snapshot = src.cached_snapshot; // may be null after reacquire freed it
             fi.icon_texture = src.icon_texture;
+            fi.icon_id = src.icon_id;
             fi.workspace = src.workspace;
             fi.title = src.title; // same heap allocation; sync pointer in case title was updated
         }
@@ -1524,7 +1527,28 @@ pub const App = struct {
         if (self.switch_mode == .current_workspace) self.buildCurrentWorkspaceItems();
     }
 
+    // WM_CLASS 可能在首次扫描后才确定；显示时重查，不能只依赖 worker 首次判断。
+    fn refreshIconVisibility(self: *Self) void {
+        for (self.items.items) |*item| {
+            if (item.icon_id.len == 0) continue;
+            if (x11.shouldHideWindowIcon(self.allocator, self.conn.conn, item.id, self.conn.atoms)) {
+                clearItemIcon(self.allocator, item);
+            }
+        }
+        if (self.switch_mode == .current_workspace) self.syncFilteredItems();
+        self.next_icon_visibility_check_ms = std.time.milliTimestamp() + 1000;
+    }
+
+    fn clearItemIcon(allocator: std.mem.Allocator, item: *DisplayWindow) void {
+        // 只断开当前窗口的关联，不释放 Firefox 等其他窗口仍在使用的共享 GPU 纹理。
+        allocator.free(item.icon_id);
+        item.icon_id = &.{};
+        item.icon_texture = null;
+    }
+
     fn render(self: *Self) void {
+        // 可见期间限频复查，覆盖打开界面后才更新的窗口类名；空 ID 不再关联缓存。
+        if (std.time.milliTimestamp() >= self.next_icon_visibility_check_ms) self.refreshIconVisibility();
         // Keep filtered_items in sync with self.items before every draw.
         // processReacquireQueue() and handleDamageEvent() update self.items directly;
         // without this sync filtered_items would have stale thumbnail_ready / cached_snapshot.
@@ -1776,4 +1800,20 @@ test "failed damage rebind retains cached preview until a later successful rebin
     try std.testing.expect(!App.canPromoteDamageTexture(snapshot, false));
     try std.testing.expect(App.canPromoteDamageTexture(snapshot, true));
     try std.testing.expect(App.canPromoteDamageTexture(null, false));
+}
+
+test "clearing an already assigned icon prevents shared cache reassignment" {
+    const allocator = std.testing.allocator;
+    var item = std.mem.zeroes(DisplayWindow);
+    item.icon_id = try allocator.dupe(u8, "Navigator");
+    item.icon_texture = std.mem.zeroes(rl.Texture2D);
+    item.title = "Zen Browser";
+    item.thumbnail_ready = true;
+    App.clearItemIcon(allocator, &item);
+    try std.testing.expect(item.icon_texture == null);
+    try std.testing.expect(!std.mem.eql(u8, item.icon_id, "Navigator"));
+    try std.testing.expectEqualStrings("Zen Browser", item.title);
+    try std.testing.expect(item.thumbnail_ready);
+    // 重复清除安全；空 ID 不会命中后续 Navigator 图标更新。
+    App.clearItemIcon(allocator, &item);
 }
