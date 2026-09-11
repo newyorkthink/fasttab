@@ -605,8 +605,8 @@ pub const App = struct {
         self.mouse_left_was_down = false;
 
         // All bindings were released while hidden. Reacquire ordinary live GLX
-        // textures progressively; cached snapshots remain visible until each
-        // window has a valid fresh binding.
+        // textures progressively. If a valid snapshot already exists, keep that
+        // snapshot visible until XDamage confirms the new backing pixmap has fresh content.
         self.reacquire_pending = self.hasPendingReacquire();
         self.reacquire_cursor = if (self.items.items.len > 0) self.selected_index % self.items.items.len else 0;
 
@@ -1056,11 +1056,6 @@ pub const App = struct {
         return desktop != 0xFFFFFFFF and desktop != current;
     }
 
-    /// Refresh mapped windows in place. If GLX rejects a refresh, keep the old
-    /// cached snapshot and let the progressive reacquire queue retry later.
-    /// Ensure one visible origin window has a valid live texture before
-    /// taking its fallback frame. This preserves cross-workspace previews without
-    /// keeping every GLX pixmap bound while FastTab is hidden.
     /// Cache all currently valid live thumbnails before releasing their
     /// GLX bindings. Previous snapshots are replaced only after a new copy succeeds.
     fn cacheAllSnapshots(self: *Self) void {
@@ -1077,6 +1072,11 @@ pub const App = struct {
     fn cacheSnapshotForWindow(self: *Self, window_id: x11.xcb.xcb_window_t) bool {
         const item = self.findItemByWindowId(window_id) orelse return false;
         if (!x11.isWindowViewable(self.conn.conn, window_id)) return false;
+
+        // A released/reacquired GLX pixmap can report success while still exposing
+        // an all-black browser backing store. If a known-good snapshot already exists,
+        // keep it until a visible XDamage event confirms fresh live content.
+        if (!item.thumbnail_ready and item.cached_snapshot != null) return true;
 
         const release_after_snapshot = self.window_hidden;
         if (!item.thumbnail_ready) {
@@ -1156,9 +1156,13 @@ pub const App = struct {
     /// ineligible items until one copy succeeds or the pass is complete.
     const REACQUIRE_FRAME_BUDGET_NS: i128 = 10 * std.time.ns_per_ms;
 
+    fn canPromoteReacquiredTexture(cached_snapshot: ?rl.RenderTexture2D) bool {
+        return cached_snapshot == null;
+    }
+
     /// Incrementally reacquire GLX textures during update() to avoid blocking showWindow.
-    /// Only mapped/viewable windows participate; cached snapshots stay authoritative
-    /// for windows that i3 has unmapped on another workspace.
+    /// Only mapped/viewable windows participate. A successful GLX bind alone is not
+    /// enough to replace an existing snapshot; XDamage promotes it to live later.
     fn processReacquireQueue(self: *Self) void {
         if (!self.reacquire_pending or self.window_hidden) return;
 
@@ -1201,9 +1205,9 @@ pub const App = struct {
 
                 const new_w = tex.width;
                 const new_h = tex.height;
-                self.markThumbnailReady(target_id, true);
                 if (self.findItemByWindowId(target_id)) |item| {
                     item.thumbnail_texture = tex.toRaylibTexture();
+                    item.thumbnail_ready = canPromoteReacquiredTexture(item.cached_snapshot);
                     if (item.source_width != new_w or item.source_height != new_h) {
                         item.source_width = new_w;
                         item.source_height = new_h;
@@ -1234,11 +1238,11 @@ pub const App = struct {
                 }
                 reacquired_count += 1;
 
-                self.markThumbnailReady(target_id, true);
                 if (self.findItemByWindowId(target_id)) |item| {
                     if (self.window_textures.getPtr(target_id)) |stored_tex| {
                         item.thumbnail_texture = stored_tex.toRaylibTexture();
                     }
+                    item.thumbnail_ready = canPromoteReacquiredTexture(item.cached_snapshot);
                     if (item.source_width != win_tex.width or item.source_height != win_tex.height) {
                         item.source_width = win_tex.width;
                         item.source_height = win_tex.height;
@@ -1695,6 +1699,12 @@ test "reacquisition skips known off-workspace windows" {
 
     application.switch_mode = .all_windows;
     try std.testing.expectEqual(@as(?u32, 20), application.nextPendingReacquireWindowId(true));
+}
+
+test "reacquired texture waits for damage when a fallback snapshot exists" {
+    try std.testing.expect(canPromoteReacquiredTexture(null));
+    const snapshot = std.mem.zeroes(rl.RenderTexture2D);
+    try std.testing.expect(!canPromoteReacquiredTexture(snapshot));
 }
 
 test "failed window append leaves task strings owned until cleanup" {

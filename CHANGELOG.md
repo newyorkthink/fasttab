@@ -142,3 +142,14 @@
 - 验证：新增纯函数回归测试覆盖 WM_CLASS 小写归一化、带 `.desktop` 后缀归一化、qualified desktop ID 的 `_` / `-` / `.` 尾段匹配以及无分隔符误匹配拒绝；并完整复核 `src/desktop_icon.zig`、`src/x11.zig`、`src/worker.zig`、`build.zig` 与 alttab 两份图标补丁的调用链。当前连接器会话没有可用的 Zig 本地编译环境，因此不宣称本地测试、ReleaseSafe 构建或 GUI 实机验证通过；最终效果仍需 Linux/i3 实机确认。
 - Actions：未修改 workflow；按仓库约定不手动触发、重跑或监控 GitHub Actions。
 - 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；本次修改前本仓库相对上游为 `ahead 132 / behind 0`，merge base 为该上游 HEAD，无新提交需要采用。
+
+### 修复 GLX 重获取黑屏并补上延迟图标重试
+
+- 状态：待实机确认。
+- 修改文件：`src/app.zig`、`src/worker.zig`、`CHANGELOG.md`。
+- 原始现象：用户实机确认此前预览修复仍不完整：同一 i3 工作区中 Edge 等浏览器在 FastTab 隐藏后再次打开仍会出现黑色预览，跨工作区同样可以出现；BlueMail 在 FastTab 中仍缺少小图标，而 alttab 可以显示。
+- 根因：① `processReacquireQueue()` 把 GLX reacquire 成功直接当成有效实时画面，但 Chromium 类窗口可能返回可绑定却暂时全黑的 backing pixmap，导致已有正常 `cached_snapshot` 被黑色 live texture 遮住，并可能在后续隐藏时被黑帧覆盖。② 后台 worker 只在窗口首次进入跟踪列表时尝试获取图标；如果应用在首轮扫描时尚未发布 `_NET_WM_ICON` 或可用 desktop/AppImage 元数据，之后该窗口不会再次尝试，因此前面的图标路径补强仍可能无法生效。
+- 修改内容：已有 `cached_snapshot` 的窗口在 GLX reacquire 成功后继续显示该缓存，不再仅凭“绑定成功”立即提升为 live；只有后续真实 XDamage 并完成 rebind 后才恢复实时预览；隐藏状态下也不再为了截图重新获取并覆盖已有缓存。没有缓存的首次窗口仍沿用原实时路径。图标 worker 新增通用延迟重试：尚未成功发布图标的已跟踪窗口最多每 1 秒重新走一次现有 desktop / AppImage / `_NET_WM_ICON` 解析，成功后停止，不增加 BlueMail 或其他应用名称硬编码。
+- 验证：新增纯逻辑回归测试覆盖“存在缓存时，reacquire 不立即提升为 live”；完整复核 `src/app.zig` 与 `src/worker.zig` 的资源生命周期、缓存所有权、任务所有权和重试节流。当前连接器执行环境没有 Zig 编译器，因此不宣称本地测试、ReleaseSafe 构建或 GUI 实机验证通过；浏览器预览和 BlueMail 图标最终效果仍待 Linux/i3 实机确认。
+- Actions：未修改 workflow；按仓库约定不手动触发、重跑或监控 GitHub Actions。
+- 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`，没有新上游提交需要采用。

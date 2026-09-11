@@ -5,6 +5,7 @@ const window_scanner = @import("window_scanner.zig");
 
 const log = std.log.scoped(.fasttab);
 const DELAY_SECONDS: f32 = 0.05; // seconds between scans
+const ICON_RETRY_INTERVAL_MS: i64 = 1000;
 
 pub const UpdateTask = union(enum) {
     window_added: WindowAdded,
@@ -169,6 +170,7 @@ const TrackedWindow = struct {
     title: []const u8, // owned copy for comparison
     icon_id: []const u8, // owned copy (WM_CLASS)
     title_version: u32,
+    next_icon_retry_ms: i64,
     allocator: std.mem.Allocator,
 
     fn deinit(self: *TrackedWindow) void {
@@ -206,6 +208,49 @@ fn fetchAndCacheIcon(
 
     // Return the cached entry (the cache now owns the data)
     return icon_cache.get(wm_class);
+}
+
+/// Queue one icon update if the class has not been published yet.
+/// Some clients publish _NET_WM_ICON shortly after they are first mapped, so
+/// callers may retry this helper without duplicating an already-published icon.
+fn queueIconIfAvailable(
+    allocator: std.mem.Allocator,
+    queue: *TaskQueue,
+    conn: *x11.Connection,
+    window_id: x11.xcb.xcb_window_t,
+    wm_class: []const u8,
+    icon_cache: *std.StringHashMap(thumbnail.Thumbnail),
+    pushed_icons: *std.StringHashMap(void),
+) bool {
+    if (pushed_icons.contains(wm_class)) return true;
+
+    const cached_icon = icon_cache.get(wm_class) orelse
+        fetchAndCacheIcon(allocator, conn, window_id, wm_class, icon_cache) orelse return false;
+
+    const icon_data_copy = allocator.dupe(u8, cached_icon.data) catch return false;
+    const icon_id_owned = allocator.dupe(u8, wm_class) catch {
+        allocator.free(icon_data_copy);
+        return false;
+    };
+    const pushed_key = allocator.dupe(u8, wm_class) catch {
+        allocator.free(icon_id_owned);
+        allocator.free(icon_data_copy);
+        return false;
+    };
+
+    queue.push(.{ .icon_added = .{
+        .icon_id = icon_id_owned,
+        .icon_data = icon_data_copy,
+        .icon_width = cached_icon.width,
+        .icon_height = cached_icon.height,
+        .allocator = allocator,
+    } });
+
+    pushed_icons.put(pushed_key, {}) catch {
+        allocator.free(pushed_key);
+        return false;
+    };
+    return true;
 }
 
 pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
@@ -354,6 +399,15 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
                         .allocator = allocator,
                     } });
                 }
+
+                const now_ms = std.time.milliTimestamp();
+                if (!pushed_icons.contains(existing.icon_id) and now_ms >= existing.next_icon_retry_ms) {
+                    if (queueIconIfAvailable(allocator, queue, &conn, item.window_id, existing.icon_id, &icon_cache, &pushed_icons)) {
+                        existing.next_icon_retry_ms = std.math.maxInt(i64);
+                    } else {
+                        existing.next_icon_retry_ms = now_ms + ICON_RETRY_INTERVAL_MS;
+                    }
+                }
             } else {
                 const wm_class = x11.getWindowClass(allocator, conn.conn, item.window_id, conn.atoms);
                 defer {
@@ -362,41 +416,7 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
                     }
                 }
 
-                if (!pushed_icons.contains(wm_class)) {
-                    var icon_data_copy: ?[]u8 = null;
-                    var icon_w: u32 = 0;
-                    var icon_h: u32 = 0;
-
-                    if (icon_cache.get(wm_class)) |cached_icon| {
-                        icon_data_copy = allocator.dupe(u8, cached_icon.data) catch null;
-                        icon_w = cached_icon.width;
-                        icon_h = cached_icon.height;
-                    } else {
-                        const icon_opt = fetchAndCacheIcon(allocator, &conn, item.window_id, wm_class, &icon_cache);
-                        if (icon_opt) |cached| {
-                            icon_data_copy = allocator.dupe(u8, cached.data) catch null;
-                            icon_w = cached.width;
-                            icon_h = cached.height;
-                        }
-                    }
-
-                    if (icon_data_copy) |idc| {
-                        const icon_id_owned = allocator.dupe(u8, wm_class) catch {
-                            allocator.free(idc);
-                            continue;
-                        };
-
-                        queue.push(.{ .icon_added = .{
-                            .icon_id = icon_id_owned,
-                            .icon_data = idc,
-                            .icon_width = icon_w,
-                            .icon_height = icon_h,
-                            .allocator = allocator,
-                        } });
-
-                        pushed_icons.put(allocator.dupe(u8, wm_class) catch continue, {}) catch {};
-                    }
-                }
+                const icon_ready = queueIconIfAvailable(allocator, queue, &conn, item.window_id, wm_class, &icon_cache, &pushed_icons);
 
                 const title_owned = if (std.mem.eql(u8, item.title, "(unknown)"))
                     allocator.dupe(u8, "(unknown)") catch continue
@@ -418,6 +438,7 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
                     .title = title_owned, // Takes ownership
                     .icon_id = icon_id_owned, // Takes ownership
                     .title_version = 1,
+                    .next_icon_retry_ms = if (icon_ready) std.math.maxInt(i64) else std.time.milliTimestamp() + ICON_RETRY_INTERVAL_MS,
                     .allocator = allocator,
                 };
                 tracked_windows.put(item.window_id, tracked) catch {
