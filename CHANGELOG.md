@@ -153,3 +153,14 @@
 - 验证：新增纯逻辑回归测试覆盖“存在缓存时，reacquire 不立即提升为 live”；完整复核 `src/app.zig` 与 `src/worker.zig` 的资源生命周期、缓存所有权、任务所有权和重试节流。当前连接器执行环境没有 Zig 编译器，因此不宣称本地测试、ReleaseSafe 构建或 GUI 实机验证通过；浏览器预览和 BlueMail 图标最终效果仍待 Linux/i3 实机确认。
 - Actions：未修改 workflow；按仓库约定不手动触发、重跑或监控 GitHub Actions。
 - 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`，没有新上游提交需要采用。
+
+### 补齐 alttab 的 WM_HINTS 窗口图标回退
+
+- 状态：待实机确认。
+- 修改文件：`src/wm_hints_icon.zig`、`src/worker.zig`、`CHANGELOG.md`。
+- 原始现象：用户实机确认前面的 desktop ID、hicolor、WM_CLASS 直接匹配和延迟重试后，BlueMail 仍没有小图标，而同机 alttab 可以显示。
+- 根因：再次对照 `sagb/alttab` 的实际 `src/win.c` 后确认，上游 alttab 的窗口图标来源并不止 `_NET_WM_ICON` 和文件图标：`addWindowInfo()` 会先尝试 `_NET_WM_ICON`，失败后调用 `addIconFromHints()` 读取 ICCCM `WM_HINTS` 的 `IconPixmapHint` / `IconMaskHint`。FastTab 此前完全缺少这条 X11 原生回退，因此继续扩大 desktop 文件匹配无法覆盖只通过 WM_HINTS 提供图标的客户端。
+- 修改内容：新增通用、应用无关的 XCB `WM_HINTS` 图标读取模块；只在现有 desktop/AppImage/`_NET_WM_ICON` 全部失败后读取 `IconPixmapHint`，可选读取 `IconMaskHint` 生成透明度，通过 `xcb-image` 读取 pixmap，并按 root TrueColor visual mask 转换成 FastTab 现有 ARGB 图标格式。worker 继续复用上一版每秒一次的延迟重试，成功后停止；kitty 已实机确认的 desktop/AppImage 路径和既有优先级不变。
+- 验证：新增纯逻辑测试覆盖 WM_HINTS flags / pixmap / mask 解析和 TrueColor channel mask 缩放；静态核对 XCB pixmap 尺寸限制、像素数量上限、mask 生命周期及 worker 图标缓存所有权。当前执行环境没有 Zig 编译器，因此不宣称本地测试、ReleaseSafe 构建或 GUI 实机验证通过；BlueMail 最终显示仍待 Linux/i3 实机确认。
+- Actions：未修改 workflow；未手动触发、重跑或监控 GitHub Actions。
+- 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；本次没有上游新提交需要采用。
