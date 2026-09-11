@@ -56,6 +56,14 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
 
+    const desktop_icon_tests = b.addTest(.{
+        .root_source_file = b.path("src/desktop_icon.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    linkFastTabDependencies(desktop_icon_tests, b);
+    test_step.dependOn(&b.addRunArtifact(desktop_icon_tests).step);
+
     const app_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/app.zig"),
         .target = target,

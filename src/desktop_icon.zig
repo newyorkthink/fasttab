@@ -19,149 +19,115 @@ pub const IconResult = struct {
 const ICON_SIZES = [_][]const u8{ "16x16", "22x22", "24x24", "32x32", "48x48", "64x64", "128x128", "256x256", "512x512" };
 const MAX_PROC_ENV_BYTES = 1024 * 1024;
 
-pub fn getAppIcon(allocator: mem.Allocator, app_name: []const u8, target_size: u32) !IconResult {
-    var host_icon_found = false;
-
-    if (try findIconNameFromDesktop(allocator, app_name)) |icon_id| {
-        host_icon_found = true;
-        defer allocator.free(icon_id);
-
-        if (fs.path.isAbsolute(icon_id)) {
-            if (loadPng(icon_id)) |icon| {
-                return icon;
-            } else |_| {}
-        } else if (try resolveIconPath(allocator, icon_id, target_size)) |icon_path| {
-            defer allocator.free(icon_path);
-            if (loadPng(icon_path)) |icon| {
-                return icon;
-            } else |_| {}
-        }
-    }
-
-    // AppImage fallback: mirror the working AltTab behavior by locating
-    // running AppImage mounts through APPDIR and using their embedded icon.
-    if (try getRunningAppImageIcon(allocator, app_name)) |icon| {
-        return icon;
-    }
-
-    if (host_icon_found) return error.IconFileNotFound;
-    return error.IconNameNotFound;
-}
-
-fn isDecimalName(name: []const u8) bool {
-    if (name.len == 0) return false;
-    for (name) |ch| {
-        if (ch < '0' or ch > '9') return false;
-    }
-    return true;
-}
-
-fn getRunningAppImageIcon(allocator: mem.Allocator, app_name: []const u8) !?IconResult {
-    var proc_dir = fs.openDirAbsolute("/proc", .{ .iterate = true }) catch return null;
-    defer proc_dir.close();
-
-    var proc_iter = proc_dir.iterate();
-    while (proc_iter.next() catch null) |entry| {
-        if (!isDecimalName(entry.name)) continue;
-
-        const environ_path = try fs.path.join(allocator, &.{ "/proc", entry.name, "environ" });
-        defer allocator.free(environ_path);
-
-        var file = fs.openFileAbsolute(environ_path, .{}) catch continue;
-        defer file.close();
-
-        const environment = file.readToEndAlloc(allocator, MAX_PROC_ENV_BYTES) catch continue;
-        defer allocator.free(environment);
-
-        var env_iter = mem.splitScalar(u8, environment, 0);
-        while (env_iter.next()) |item| {
-            if (!mem.startsWith(u8, item, "APPDIR=")) continue;
-
-            const appdir = item[7..];
-            if (appdir.len == 0 or !fs.path.isAbsolute(appdir)) break;
-            fs.accessAbsolute(appdir, .{}) catch break;
-
-            if (try loadMatchingAppDirIcon(allocator, appdir, app_name)) |icon| {
-                return icon;
+pub fn getAppIcon(allocator: mem.Allocator, app_names: []const []const u8, target_size: u32, pid: ?std.posix.pid_t) !IconResult {
+    // Both WM_CLASS strings are useful; a custom instance must not hide the class.
+    for (app_names) |app_name| {
+        if (app_name.len == 0 or mem.eql(u8, app_name, "(unknown)")) continue;
+        if (try findIconNameFromDesktop(allocator, app_name)) |icon_id| {
+            defer allocator.free(icon_id);
+            if (fs.path.isAbsolute(icon_id)) {
+                if (loadPng(icon_id)) |icon| return icon else |_| {}
+            } else if (try resolveIconPath(allocator, icon_id, target_size)) |icon_path| {
+                defer allocator.free(icon_path);
+                if (loadPng(icon_path)) |icon| return icon else |_| {}
             }
-            break;
         }
     }
 
+    // The window PID identifies the AppImage, even with a custom WM_CLASS.
+    // Never scan unrelated processes or require a matching desktop filename.
+    if (pid) |process_id| {
+        if (try getProcessAppImageIcon(allocator, process_id)) |icon| return icon;
+    }
+    return error.IconFileNotFound;
+}
+
+fn appDirFromEnvironment(environment: []const u8) ?[]const u8 {
+    var entries = mem.splitScalar(u8, environment, 0);
+    while (entries.next()) |entry| {
+        if (!mem.startsWith(u8, entry, "APPDIR=")) continue;
+        const path = entry[7..];
+        return if (fs.path.isAbsolute(path)) path else null;
+    }
     return null;
 }
 
-fn loadMatchingAppDirIcon(allocator: mem.Allocator, appdir: []const u8, app_name: []const u8) !?IconResult {
-    var dir = fs.openDirAbsolute(appdir, .{ .iterate = true }) catch return null;
+fn getProcessAppImageIcon(allocator: mem.Allocator, pid: std.posix.pid_t) !?IconResult {
+    if (pid <= 0) return null;
+    const path = try std.fmt.allocPrint(allocator, "/proc/{d}/environ", .{pid});
+    defer allocator.free(path);
+    var file = fs.openFileAbsolute(path, .{}) catch return null;
+    defer file.close();
+    const environment = file.readToEndAlloc(allocator, MAX_PROC_ENV_BYTES) catch return null;
+    defer allocator.free(environment);
+    const appdir = appDirFromEnvironment(environment) orelse return null;
+    return loadAppDirIcon(allocator, appdir);
+}
+
+fn loadAppDirIcon(allocator: mem.Allocator, appdir: []const u8) !?IconResult {
+    var dir = fs.openDirAbsolute(appdir, .{}) catch return null;
     defer dir.close();
+    const diricon = try fs.path.join(allocator, &.{ appdir, ".DirIcon" });
+    defer allocator.free(diricon);
+    if (loadPng(diricon)) |icon| return icon else |_| {}
 
-    const desktop_file = if (mem.endsWith(u8, app_name, ".desktop"))
-        try allocator.dupe(u8, app_name)
-    else
-        try std.fmt.allocPrint(allocator, "{s}.desktop", .{app_name});
-    defer allocator.free(desktop_file);
+    // Some bundles use an absolute /usr/... symlink relative to their AppDir.
+    var link_buf: [fs.max_path_bytes]u8 = undefined;
+    if (dir.readLink(".DirIcon", &link_buf)) |target| {
+        if (try loadAppDirIconValue(allocator, appdir, target)) |icon| return icon;
+    } else |_| {}
 
-    var dir_iter = dir.iterate();
-    while (dir_iter.next() catch null) |entry| {
-        if (!mem.endsWith(u8, entry.name, ".desktop")) continue;
-
-        const filename_matches = mem.eql(u8, entry.name, desktop_file);
-        const icon_id = try scanAppDirDesktopForIcon(allocator, dir, entry.name, app_name, filename_matches) orelse continue;
-        defer allocator.free(icon_id);
-
-        // AppImage convention: .DirIcon normally points at the application icon.
-        const diricon = try fs.path.join(allocator, &.{ appdir, ".DirIcon" });
-        defer allocator.free(diricon);
-        if (loadPng(diricon)) |icon| {
-            return icon;
-        } else |_| {}
-
-        if (try loadAppDirIconValue(allocator, appdir, icon_id)) |icon| {
-            return icon;
+    for ([_][]const u8{ ".", "usr/share/applications" }) |subdir| {
+        var desktop_dir = dir.openDir(subdir, .{ .iterate = true }) catch continue;
+        defer desktop_dir.close();
+        var iter = desktop_dir.iterate();
+        while (iter.next() catch null) |entry| {
+            if (!mem.endsWith(u8, entry.name, ".desktop")) continue;
+            const icon_id = try scanDesktopForIcon(allocator, desktop_dir, entry.name, null) orelse continue;
+            defer allocator.free(icon_id);
+            if (try loadAppDirIconValue(allocator, appdir, icon_id)) |icon| return icon;
         }
     }
-
     return null;
 }
 
-fn scanAppDirDesktopForIcon(
-    allocator: mem.Allocator,
-    dir: fs.Dir,
-    filename: []const u8,
-    app_name: []const u8,
-    filename_matches: bool,
-) !?[]const u8 {
+/// Read only the main Desktop Entry group, never an action's Icon/WMClass.
+fn scanDesktopForIcon(allocator: mem.Allocator, dir: fs.Dir, filename: []const u8, wm_class: ?[]const u8) !?[]const u8 {
     var file = dir.openFile(filename, .{}) catch return null;
     defer file.close();
-
     var icon_val: ?[]const u8 = null;
     errdefer if (icon_val) |v| allocator.free(v);
-
-    var wm_class_matches = false;
+    var matches = wm_class == null;
+    var in_entry = false;
     var reader = std.io.bufferedReader(file.reader());
-    var buf: [1024]u8 = undefined;
+    var buf: [4096]u8 = undefined;
     while (reader.reader().readUntilDelimiterOrEof(&buf, '\n') catch null) |line| {
         const t = mem.trim(u8, line, " \r");
-        if (icon_val == null and mem.startsWith(u8, t, "Icon=")) {
-            icon_val = try allocator.dupe(u8, t[5..]);
+        if (mem.startsWith(u8, t, "[")) {
+            in_entry = mem.eql(u8, t, "[Desktop Entry]");
+            continue;
         }
-        if (mem.startsWith(u8, t, "StartupWMClass=") and mem.eql(u8, t[15..], app_name)) {
-            wm_class_matches = true;
+        if (!in_entry) continue;
+        if (icon_val == null and mem.startsWith(u8, t, "Icon=") and t.len > 5)
+            icon_val = try allocator.dupe(u8, t[5..]);
+        if (wm_class) |name| {
+            if (mem.startsWith(u8, t, "StartupWMClass=") and std.ascii.eqlIgnoreCase(t[15..], name)) matches = true;
         }
     }
-
-    if (filename_matches or wm_class_matches) return icon_val;
+    if (matches) return icon_val;
     if (icon_val) |v| allocator.free(v);
     return null;
 }
 
+fn appDirPath(allocator: mem.Allocator, appdir: []const u8, path: []const u8) ![]const u8 {
+    const root = mem.trimRight(u8, appdir, "/");
+    if (fs.path.isAbsolute(path) and mem.startsWith(u8, path, root) and
+        (path.len == root.len or path[root.len] == '/')) return allocator.dupe(u8, path);
+    return fs.path.join(allocator, &.{ appdir, mem.trimLeft(u8, path, "/") });
+}
+
 fn loadAppDirIconValue(allocator: mem.Allocator, appdir: []const u8, icon_id: []const u8) !?IconResult {
-    const candidate = if (fs.path.isAbsolute(icon_id)) blk: {
-        if (mem.startsWith(u8, icon_id, appdir)) {
-            break :blk try allocator.dupe(u8, icon_id);
-        }
-        break :blk try fs.path.join(allocator, &.{ appdir, mem.trimLeft(u8, icon_id, "/") });
-    } else try fs.path.join(allocator, &.{ appdir, icon_id });
+    const candidate = try appDirPath(allocator, appdir, icon_id);
     defer allocator.free(candidate);
 
     if (loadPng(candidate)) |icon| {
@@ -178,6 +144,23 @@ fn loadAppDirIconValue(allocator: mem.Allocator, appdir: []const u8, icon_id: []
         if (loadPng(png_candidate)) |icon| {
             return icon;
         } else |_| {}
+    }
+
+    // A bare Icon= name can live in the bundle's standard icon tree.
+    if (!fs.path.isAbsolute(icon_id) and mem.indexOfScalar(u8, icon_id, '/') == null) {
+        const filename = if (mem.endsWith(u8, icon_id, ".png"))
+            try allocator.dupe(u8, icon_id)
+        else
+            try std.fmt.allocPrint(allocator, "{s}.png", .{icon_id});
+        defer allocator.free(filename);
+        for (ICON_SIZES) |size| {
+            const path = try fs.path.join(allocator, &.{ appdir, "usr/share/icons/hicolor", size, "apps", filename });
+            defer allocator.free(path);
+            if (loadPng(path)) |icon| return icon else |_| {}
+        }
+        const path = try fs.path.join(allocator, &.{ appdir, "usr/share/pixmaps", filename });
+        defer allocator.free(path);
+        if (loadPng(path)) |icon| return icon else |_| {}
     }
 
     return null;
@@ -224,17 +207,7 @@ fn findIconNameFromDesktop(allocator: mem.Allocator, app_name: []const u8) !?[]c
         var dir = fs.openDirAbsolute(base, .{}) catch continue;
         defer dir.close();
 
-        var file = dir.openFile(desktop_file, .{}) catch continue;
-        defer file.close();
-
-        var reader = std.io.bufferedReader(file.reader());
-        var buf: [1024]u8 = undefined;
-        while (try reader.reader().readUntilDelimiterOrEof(&buf, '\n')) |line| {
-            const trimmed = mem.trim(u8, line, " \r");
-            if (mem.startsWith(u8, trimmed, "Icon=")) {
-                return try allocator.dupe(u8, trimmed[5..]);
-            }
-        }
+        if (try scanDesktopForIcon(allocator, dir, desktop_file, null)) |icon| return icon;
     }
 
     // Pass 2: scan all .desktop files for StartupWMClass= match.
@@ -246,37 +219,12 @@ fn findIconNameFromDesktop(allocator: mem.Allocator, app_name: []const u8) !?[]c
         var dir_iter = dir.iterate();
         while (dir_iter.next() catch null) |entry| {
             if (!mem.endsWith(u8, entry.name, ".desktop")) continue;
-            if (try scanDesktopForWMClass(allocator, dir, entry.name, app_name)) |icon| {
+            if (try scanDesktopForIcon(allocator, dir, entry.name, app_name)) |icon| {
                 return icon;
             }
         }
     }
 
-    return null;
-}
-
-/// Read a single .desktop file and return the Icon= value if StartupWMClass= matches wm_class.
-/// Returns null if the file doesn't match or can't be read.
-fn scanDesktopForWMClass(allocator: mem.Allocator, dir: fs.Dir, filename: []const u8, wm_class: []const u8) !?[]const u8 {
-    var file = dir.openFile(filename, .{}) catch return null;
-    defer file.close();
-
-    var icon_val: ?[]const u8 = null;
-    errdefer if (icon_val) |v| allocator.free(v);
-
-    var wm_class_matches = false;
-    var reader = std.io.bufferedReader(file.reader());
-    var buf: [1024]u8 = undefined;
-    while (reader.reader().readUntilDelimiterOrEof(&buf, '\n') catch null) |line| {
-        const t = mem.trim(u8, line, " \r");
-        if (icon_val == null and mem.startsWith(u8, t, "Icon="))
-            icon_val = try allocator.dupe(u8, t[5..]);
-        if (mem.startsWith(u8, t, "StartupWMClass=") and mem.eql(u8, t[15..], wm_class))
-            wm_class_matches = true;
-    }
-
-    if (wm_class_matches) return icon_val;
-    if (icon_val) |v| allocator.free(v);
     return null;
 }
 
@@ -361,4 +309,102 @@ fn loadPng(path: []const u8) !IconResult {
         .height = height,
         .pixels = data[0..@intCast(width * height * 4)],
     };
+}
+
+test "APPDIR parsing rejects unrelated variables and relative paths" {
+    try std.testing.expectEqualStrings("/bundle", appDirFromEnvironment("OTHER=value\x00APPDIR=/bundle\x00TAIL=value\x00").?);
+    try std.testing.expect(appDirFromEnvironment("APPDIR=relative\x00") == null);
+    try std.testing.expect(appDirFromEnvironment("APPDIR=\x00") == null);
+    try std.testing.expect(appDirFromEnvironment("OTHER_APPDIR=/bundle\x00") == null);
+}
+
+test "AppDir absolute paths require a directory boundary" {
+    const allocator = std.testing.allocator;
+    const cases = [_][2][]const u8{
+        .{ "/bundle/icon.png", "/bundle/icon.png" },
+        .{ "/bundle-other/icon.png", "/bundle/bundle-other/icon.png" },
+        .{ "/usr/share/icon.png", "/bundle/usr/share/icon.png" },
+        .{ "icon.png", "/bundle/icon.png" },
+    };
+    for (cases) |case| {
+        const actual = try appDirPath(allocator, "/bundle", case[0]);
+        defer allocator.free(actual);
+        try std.testing.expectEqualStrings(case[1], actual);
+    }
+}
+
+test "desktop lookup uses application class and ignores desktop actions" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "terminal.desktop", .data = "[Desktop Action Other]\nIcon=wrong\nStartupWMClass=wrong\n" ++
+        "[Desktop Entry]\nIcon=terminal\nStartupWMClass=TerminalApp\n" ++
+        "[Desktop Action New]\nIcon=also-wrong\n" });
+    const allocator = std.testing.allocator;
+    const icon = (try scanDesktopForIcon(allocator, tmp.dir, "terminal.desktop", "terminalapp")).?;
+    defer allocator.free(icon);
+    try std.testing.expectEqualStrings("terminal", icon);
+    try std.testing.expect((try scanDesktopForIcon(allocator, tmp.dir, "terminal.desktop", "wrong")) == null);
+}
+
+// One opaque red pixel, decoded through the same STB path as application icons.
+const test_png = "\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0dIDAT\x08\xd7\x63\xf8\xcf\xc0\xf0\x1f\x00\x05\x00\x01\xff\x89\x99\x3d\x1d\x00\x00\x00\x00IEND\xaeB\x60\x82";
+
+test "AppDir icon works without desktop metadata or matching WM_CLASS" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = ".DirIcon", .data = test_png });
+    const path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(path);
+    var icon = (try loadAppDirIcon(std.testing.allocator, path)).?;
+    defer icon.deinit();
+    try std.testing.expectEqual(@as(i32, 1), icon.width);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, icon.pixels);
+}
+
+test "AppDir resolves root-relative DirIcon symlinks" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("usr/share/pixmaps");
+    try tmp.dir.writeFile(.{ .sub_path = "usr/share/pixmaps/fasttab-test-icon.png", .data = test_png });
+    try tmp.dir.symLink("/usr/share/pixmaps/fasttab-test-icon.png", ".DirIcon", .{});
+    const path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(path);
+    var icon = (try loadAppDirIcon(std.testing.allocator, path)).?;
+    defer icon.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, icon.pixels);
+}
+
+test "AppDir resolves nested desktop and themed PNG with extension" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("usr/share/applications");
+    try tmp.dir.makePath("usr/share/icons/hicolor/32x32/apps");
+    try tmp.dir.writeFile(.{ .sub_path = "usr/share/applications/unrelated.desktop", .data = "[Desktop Entry]\nIcon=embedded.png\n" });
+    try tmp.dir.writeFile(.{ .sub_path = "usr/share/icons/hicolor/32x32/apps/embedded.png", .data = test_png });
+    const path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(path);
+    var icon = (try loadAppDirIcon(std.testing.allocator, path)).?;
+    defer icon.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, icon.pixels);
+}
+
+test "AppImage fallback reads only the supplied process APPDIR" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = ".DirIcon", .data = test_png });
+    const path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(path);
+    var environment = std.process.EnvMap.init(allocator);
+    defer environment.deinit();
+    try environment.put("APPDIR", path);
+    var child = std.process.Child.init(&.{ "/bin/sleep", "30" }, allocator);
+    child.env_map = &environment;
+    try child.spawn();
+    defer _ = child.kill() catch {};
+    try child.waitForSpawn();
+    var icon = (try getProcessAppImageIcon(allocator, child.id)).?;
+    defer icon.deinit();
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, icon.pixels);
+    try std.testing.expect((try getProcessAppImageIcon(allocator, 0)) == null);
 }

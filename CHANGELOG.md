@@ -84,3 +84,16 @@
 - 原因：原 `AGENTS.md` 仍是上游时期的英文开发说明，部分结构与当前仓库已经不一致，也没有强制记录后续修改和上游同步状态。
 - 修改内容：按当前仓库实际状态重写中文 `AGENTS.md`；建立本文件作为持续变更记录；README 增加变更记录入口；明确本地稳定基线、上游选择性同步规则、单一 CI/Release 合约和提交前检查要求。
 - 结果：后续 AI 修改前必须先读取本文件，任何提交到 `main` 的实际修改都必须同步追加记录。
+
+## 2026-09-11
+
+### 修正自定义窗口类名和 AppImage 图标回退
+
+- 状态：待实机确认。
+- 修改文件：`src/desktop_icon.zig`、`src/x11.zig`、`build.zig`、`README.md`、`README.zh-CN.md`、`CHANGELOG.md`。
+- 原始现象：kitty 在 FastTab 中仍缺少小图标，而参考 alttab 能显示；此前 `a7b48b6f72bfa69d0202cd7bc424b91239532dc2` 的回退不足以覆盖该反馈。
+- 检查结果：原代码只查询 `WM_CLASS` 的实例名，忽略应用类名；AppImage 回退扫描所有进程，并要求桌面文件名或 `StartupWMClass` 匹配后才读取 `.DirIcon`，因此自定义类名或缺少桌面元数据时仍会漏图标。
+- 修改内容：宿主解析依次尝试实例名和应用类名；参照 `newyorkthink/linux-packaging` 的 alttab 通用实现，仅从窗口 PID 对应的进程读取 `APPDIR`，直接尝试 `.DirIcon`，并支持根目录相对的绝对符号链接、内嵌 desktop、hicolor 和 pixmaps PNG 回退；desktop 元数据限定读取 `[Desktop Entry]`；同时校验 PID 格式和范围，避免无效整数转换。
+- 验证：独立工作目录完成 Zig 测试及 ReleaseSafe 构建；新增测试覆盖双 WM_CLASS、APPDIR 解析、目录边界、desktop action 隔离、无 desktop 的 `.DirIcon`、绝对符号链接、内嵌主题 PNG，以及受控子进程 PID 回退。真实 Linux GUI 中 kitty 的最终显示仍待确认，CI 状态以本提交 Actions 结果为准。
+- 限制：保留现有 STB 解码能力，未新增 SVG/XPM 解码；原有浏览器预览已知问题不在本次修复范围内。
+- 上游核查：`LBognanni/fasttab` 当前 `main` HEAD 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；修改前本仓库相对上游为 `ahead 127 / behind 0`，merge base 为该上游 HEAD。没有新提交需要采用，不重复合并，不改变现有窗口切换、实时预览、CLI 和 Release 基线。

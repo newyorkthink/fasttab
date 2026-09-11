@@ -932,11 +932,10 @@ fn getWindowPidUncached(conn: *xcb.xcb_connection_t, window: xcb.xcb_window_t, a
     defer std.c.free(reply);
 
     const len = xcb.xcb_get_property_value_length(reply);
-    if (len < @sizeOf(u32)) {
-        return null;
-    }
+    if (reply.*.format != 32 or len != @sizeOf(u32)) return null;
 
     const data: *const u32 = @ptrCast(@alignCast(xcb.xcb_get_property_value(reply)));
+    if (data.* == 0 or data.* > std.math.maxInt(std.posix.pid_t)) return null;
     return @intCast(data.*);
 }
 
@@ -1422,13 +1421,23 @@ pub const IconData = struct {
     }
 };
 
-/// Get the WM_CLASS of a window (returns the class name, the second null-terminated string).
+/// Get the WM_CLASS instance used by the existing shared icon cache.
 /// Caller must free the returned slice if it is not "(unknown)".
 pub fn getWindowClass(
     allocator: std.mem.Allocator,
     conn: *xcb.xcb_connection_t,
     window: xcb.xcb_window_t,
     atoms: Atoms,
+) []const u8 {
+    return getWindowClassPart(allocator, conn, window, atoms, false);
+}
+
+fn getWindowClassPart(
+    allocator: std.mem.Allocator,
+    conn: *xcb.xcb_connection_t,
+    window: xcb.xcb_window_t,
+    atoms: Atoms,
+    class_part: bool,
 ) []const u8 {
     const cookie = xcb.xcb_get_property(conn, 0, window, atoms.wm_class, xcb.XCB_ATOM_STRING, 0, 256);
     const reply = xcb.xcb_get_property_reply(conn, cookie, null);
@@ -1445,19 +1454,23 @@ pub fn getWindowClass(
     const data: [*]const u8 = @ptrCast(xcb.xcb_get_property_value(reply));
     const bytes = data[0..len];
 
-    // WM_CLASS is two null-terminated strings: instance\0class\0
-    // Use the instance name (first string): it's lowercase and matches .desktop filenames.
-    // The class name (second string) is capitalized and not useful for icon/desktop lookup.
-    var instance_end: usize = 0;
-    while (instance_end < len and bytes[instance_end] != 0) {
-        instance_end += 1;
-    }
-
-    if (instance_end > 0) {
-        return allocator.dupe(u8, bytes[0..instance_end]) catch "(unknown)";
-    }
+    const name = windowClassPart(bytes, class_part);
+    if (name.len > 0) return allocator.dupe(u8, name) catch "(unknown)";
 
     return "(unknown)";
+}
+
+fn windowClassPart(bytes: []const u8, class_part: bool) []const u8 {
+    var parts = std.mem.splitScalar(u8, bytes, 0);
+    const instance = parts.next() orelse return "";
+    return if (class_part) parts.next() orelse "" else instance;
+}
+
+test "WM_CLASS preserves custom instance and application class separately" {
+    try std.testing.expectEqualStrings("custom-terminal", windowClassPart("custom-terminal\x00TerminalApp\x00", false));
+    try std.testing.expectEqualStrings("TerminalApp", windowClassPart("custom-terminal\x00TerminalApp\x00", true));
+    try std.testing.expectEqualStrings("", windowClassPart("instance-only", true));
+    try std.testing.expectEqualStrings("TerminalApp", windowClassPart("\x00TerminalApp\x00", true));
 }
 
 /// Get the best available icon for a window. Prefers the .desktop file icon
@@ -1474,10 +1487,11 @@ pub fn getWindowIcon(
     const class_name = getWindowClass(allocator, conn, window, atoms);
     defer if (!std.mem.eql(u8, class_name, "(unknown)")) allocator.free(class_name);
 
-    desktop_blk: {
-        if (std.mem.eql(u8, class_name, "(unknown)")) break :desktop_blk;
+    const application_class = getWindowClassPart(allocator, conn, window, atoms, true);
+    defer if (!std.mem.eql(u8, application_class, "(unknown)")) allocator.free(application_class);
 
-        var ir = desktop_icon.getAppIcon(allocator, class_name, target_size) catch |err| {
+    desktop_blk: {
+        var ir = desktop_icon.getAppIcon(allocator, &.{ class_name, application_class }, target_size, getWindowPidUncached(conn, window, atoms)) catch |err| {
             log.debug("No desktop icon for {s}: {}", .{ class_name, err });
             break :desktop_blk;
         };
