@@ -209,3 +209,14 @@
 - 验证：本地 86 项测试与 ReleaseSafe 构建通过；新增回归验证相同 instance 的不同应用图标独立缓存、同一完整身份继续复用。实际 GUI 显示仍待用户确认，不据此宣称所有 Zen 缺图标问题已解决。
 - Actions：提交使用 `[skip ci]`，由用户自行执行，不触发或监控。
 - 上游核查：`LBognanni/fasttab` main 为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；修改前 `ahead 142 / behind 0`，无新上游提交需要采用。
+
+### 撤销无效缓存修改并明确将 Zen 小图标留空
+
+- 状态：撤销与文档整理完成；Zen 图标来源识别仍未解决，留空策略待实机确认。
+- 修改文件：`src/x11.zig`、`src/worker.zig`、`README.md`、`README.zh-CN.md`、`AGENTS.md`、`CHANGELOG.md`。
+- 用户反馈：`032fd5957b85b59a5189964377fc7f8a8737bf2b` 后 Zen 仍显示 Firefox 图标，前条缓存冲突说明不足以解释全部原因，不再宣称该方案有效。
+- 修改内容：撤销该提交的复合缓存键、相关测试和注释，恢复此前缓存机制；仅撤销不能保证留空，因此按用户明确要求，对应用类名 `zen` / `zen-browser` 使用空图标 ID，跳过加载、缓存复用和重试，保留标题、预览及窗口切换。新增中文注释说明这是明确的留空策略，不是新的图标识别尝试。
+- 保留基线：kitty、BlueMail、Edge 已确认图标路径，以及 `3e62ac8` 的 damage 缓存保护和容器目录链接解析均保留；工作区分组、组内最近使用顺序、半透明灰色占位、CLI 和 Release 规则不变。两份 README 同步整理当前功能和已知问题，AGENTS 记录用户要求的留空例外。
+- 验证：本地 86 项测试与 ReleaseSafe 构建通过；完整检查 diff、空 ID 的缓存隔离和停止重试路径，两份 README 内容一致。未运行桌面程序，未安装软件，不宣称 GUI 实机验证通过。
+- Actions：使用 `[skip ci]` 提交并推送 main，由用户自行执行，不触发或监控；保留历史提交及历史变更记录。
+- 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；修改前 `ahead 143 / behind 0`，没有新上游提交需要采用。

@@ -47,6 +47,7 @@ FastTab 是 `LBognanni/fasttab` 的维护分支，主要面向 Linux X11 环境�
 - `_NET_WM_ICON` 与 ICCCM `WM_HINTS` 的 `IconPixmapHint` / `IconMaskHint` 保留为 X11 最终回退。
 - 当前 AppImage、进程根目录和 X11 图标回退都必须保持泛化机制，不得改成 kitty、BlueMail、Edge、Zen Browser 或其他单个应用专用判断。
 - kitty、BlueMail、Edge 当前已经在真实 Linux 环境显示小图标，属于已确认基线；后续修复其他应用图标时不得重写或删减这些已生效路径。
+- 用户明确要求的例外：Zen Browser 图标识别未解决，应用类名 `zen` / `zen-browser` 的小图标留空，不加载、不复用其他应用图标；保留预览、标题和窗口切换。`032fd59` 的复合缓存键方案已撤销，不再宣称修复成功。
 
 ### CLI
 
