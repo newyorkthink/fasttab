@@ -124,13 +124,13 @@ fn getPixmapGeometry(conn: *xcb.xcb_connection_t, pixmap: xcb.xcb_pixmap_t) ?str
     if (reply == null) return null;
     defer std.c.free(reply);
 
-    if (reply.?.*.width == 0 or reply.?.*.height == 0) return null;
-    if (reply.?.*.width > MAX_ICON_DIMENSION or reply.?.*.height > MAX_ICON_DIMENSION) return null;
+    if (reply.*.width == 0 or reply.*.height == 0) return null;
+    if (reply.*.width > MAX_ICON_DIMENSION or reply.*.height > MAX_ICON_DIMENSION) return null;
 
     return .{
-        .width = reply.?.*.width,
-        .height = reply.?.*.height,
-        .depth = reply.?.*.depth,
+        .width = reply.*.width,
+        .height = reply.*.height,
+        .depth = reply.*.depth,
     };
 }
 
@@ -182,9 +182,8 @@ pub fn getWindowIcon(
         }
     }
 
-    const masks = if (geometry.depth == 1) null else rootVisualMasks(conn.screen) orelse return null;
+    const masks: ?VisualMasks = if (geometry.depth == 1) null else rootVisualMasks(conn.screen) orelse return null;
     const pixels = allocator.alloc(u32, pixel_count) catch return null;
-    errdefer allocator.free(pixels);
 
     var y: u32 = 0;
     while (y < geometry.height) : (y += 1) {
@@ -195,7 +194,8 @@ pub fn getWindowIcon(
                 if (xcb.xcb_image_get_pixel(mask, x, y) == 0) 0 else 255
             else
                 255;
-            pixels[@as(usize, y) * @as(usize, geometry.width) + @as(usize, x)] = pixelToArgb(pixel, geometry.depth, masks, alpha);
+            const index: usize = @as(usize, @intCast(y)) * @as(usize, geometry.width) + @as(usize, @intCast(x));
+            pixels[index] = pixelToArgb(pixel, geometry.depth, masks, alpha);
         }
     }
 
