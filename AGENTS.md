@@ -32,6 +32,8 @@ FastTab 是 `LBognanni/fasttab` 的维护分支，主要面向 Linux X11 环境�
 
 ### 实时预览
 
+- 用户已确认此前浏览器窗口预览黑屏问题修复，现有缓存与 XDamage 恢复保护属于稳定基线；没有新的故障反馈时，不再列为未解决问题，也不得为文档整理改动相关代码。
+
 - 所有 X11 客户端共用一套通用 GLX 实时预览路径。
 - 不应重新加入 Firefox、Edge、Remmina、root framebuffer 等基于应用名称的专用捕获规则，除非用户明确要求且有可核实的技术原因。
 - FastTab 隐藏时释放 XComposite/GLX 绑定，再次显示时重新获取最新 backing pixmap。
