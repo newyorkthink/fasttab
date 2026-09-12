@@ -33,13 +33,16 @@ FastTab 是 `LBognanni/fasttab` 的维护分支，主要面向 Linux X11 环境�
 ### 实时预览
 
 - 用户已确认此前浏览器窗口预览黑屏问题修复，现有缓存与 XDamage 恢复保护属于稳定基线；没有新的故障反馈时，不再列为未解决问题，也不得为文档整理改动相关代码。
-
+- 用户已实机确认提交 `00dbc40a9ecfcd07988c8d60ece0bf185935ac7c` 与 `883657dd925557e48e5b88103d129787d368a3a8` 的隐藏态预览行为：即使 FastTab 从未打开，只要窗口在当前工作区实际成为活动窗口，或作为同一工作区中仍为 `viewable` 的其他窗口存在，之后切换到其他工作区时仍可显示最后有效预览；同一工作区多个可见窗口不会再因为未聚焦而漏掉缓存。
 - 所有 X11 客户端共用一套通用 GLX 实时预览路径。
 - 不应重新加入 Firefox、Edge、Remmina、root framebuffer 等基于应用名称的专用捕获规则，除非用户明确要求且有可核实的技术原因。
-- FastTab 隐藏时释放 XComposite/GLX 绑定，再次显示时重新获取最新 backing pixmap。
-- 缓存截图只作为跨工作区或窗口暂时未映射时的兜底，不应取代正常实时预览。
+- FastTab 隐藏时不长期持有 XComposite/GLX binding；需要生成隐藏态缓存时只临时 acquire/reacquire，复制到 `cached_snapshot` 后立即 release。
+- 隐藏且空闲时，活动窗口在短暂 settle 后生成首次缓存；已有缓存只有观察到该活动窗口的 XDamage 后才允许刷新，焦点离开前如内容发生变化且窗口仍 `viewable`，再补抓最后一帧。
+- 同一可见工作区中的其他未聚焦窗口如果仍 `viewable` 且没有缓存，由隐藏态 sweep 每个 daemon loop 最多分帧补齐一个；sweep 只填补缺失缓存，不覆盖已有 `cached_snapshot`，也不重新抓取已经不可见的跨工作区窗口。
+- 缓存截图只作为跨工作区、窗口暂时未映射或 FastTab 隐藏期间保留最后有效画面的兜底，不应取代正常实时预览。
 - 已有有效 `cached_snapshot` 时，GLX reacquire 成功本身不能立即把可能为黑帧的纹理提升为 live；必须等到真实 XDamage 后完成 rebind 才恢复实时预览。
 - 已知位于其他工作区或当前不可见的窗口不得覆盖已有有效缓存截图；修复其他功能时不得回退这条浏览器黑屏保护。
+- `src/hidden_snapshot.zig` 的“隐藏态临时抓图、立即释放、只补缺失缓存”与现有 XDamage / viewable 保护共同组成当前稳定基线；后续修复浏览器黑帧或资源生命周期问题时，不得再次删除“未打开 FastTab 也能为当前可见窗口保留最后预览”的行为。
 
 ### 应用图标
 
@@ -207,6 +210,7 @@ LBognanni/fasttab
 - 修改绑定和释放顺序前必须确认资源所有权、释放顺序和重新获取路径。
 - 不得用 CPU 截图或静态缓存替代当前正常零拷贝 / 实时路径，除非用户明确改变架构目标。
 - 应优先修通用 renderer / texture lifecycle，而不是按应用名称分叉实现。
+- 隐藏态预览缓存必须保持“临时绑定 → 复制快照 → 立即释放”的资源生命周期；sweep 只填补当前仍 `viewable` 且缺少缓存的窗口，不得为了补缓存恢复后台长期 GLX/XComposite binding，也不得覆盖跨工作区保留的有效缓存。
 
 ## 8. 图标处理要求
 
@@ -290,6 +294,7 @@ fasttab/
 ├── src/
 │   ├── main.zig
 │   ├── app.zig
+│   ├── hidden_snapshot.zig
 │   ├── x11.zig
 │   ├── window_icon.zig
 │   ├── wm_hints_icon.zig

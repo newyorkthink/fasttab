@@ -288,3 +288,15 @@
 - 保护：sweep 只填补缺失缓存，不覆盖已有 `cached_snapshot`，也不触碰已不可见的跨工作区窗口；因此不恢复隐藏态长期绑定，也不削弱已实机确认的浏览器黑帧保护。Zen/Firefox 图标来源、完整 `WM_CLASS` 缓存身份、排序、CLI、workflow 与 Release 均未修改。
 - 验证：新增纯逻辑回归测试覆盖“未聚焦但可见且无缓存的兄弟窗口可被 sweep”“已有缓存和不可见窗口跳过”“活动窗口 settle 完成前不被 sweep 抢先抓取”。当前连接器环境无 Zig 编译器，因此不宣称本地 `zig build test` / ReleaseSafe 构建通过；push 后沿用现有 Public CI 自动验证，GUI 结果仍待 Linux/i3 实机确认。
 - 上游核查：`LBognanni/fasttab` `main` HEAD 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；本次无新上游提交需要采用。
+
+### 实机确认隐藏态多窗口预览缓存并固化稳定基线
+
+- 状态：实机确认；基准文档整理完成。
+- 修改文件：`AGENTS.md`、`CHANGELOG.md`；本次不修改任何源码、README、workflow、打包或 Release 配置。
+- 实机确认：用户确认 `00dbc40a9ecfcd07988c8d60ece0bf185935ac7c` 已恢复“FastTab 从未打开时，普通切换/使用过的窗口在离开工作区后仍保留预览”；随后确认 `883657dd925557e48e5b88103d129787d368a3a8` 已补齐“同一工作区存在多个同时可见窗口时，未聚焦窗口也不会漏掉缓存预览”。这两项行为正式并入当前稳定基线。
+- 稳定语义：FastTab 隐藏且空闲时不长期持有 XComposite/GLX binding。活动窗口在 settle 后临时抓取首次缓存，已有缓存只在观察到 XDamage 后允许刷新，焦点离开前如内容变化且窗口仍 `viewable` 可补抓最后一帧；同一可见工作区中的其他 `viewable` 且无缓存窗口由 sweep 每个 daemon loop 最多分帧补齐一个。每次隐藏态抓图完成后立即 release GLX/XComposite binding。
+- 保护边界：sweep 只填补缺失 `cached_snapshot`，不得覆盖已有有效缓存；已不可见或已经切到其他工作区的窗口不得重新抓取。现有“reacquire 成功不能直接把可能黑帧的纹理提升为 live，需等真实 XDamage 后 rebind”的浏览器黑帧保护继续保留。
+- 后续维护：`src/hidden_snapshot.zig` 与 `src/app.zig` 的上述职责共同组成当前预览稳定基线；以后修复浏览器、工作区或 GLX 生命周期问题时，不得再次以“隐藏时完全不处理预览”为由删除这套行为，也不得恢复隐藏态长期 GLX/XComposite binding。
+- 文档整理：`AGENTS.md` 的实时预览基线补齐活动窗口缓存、同工作区多窗口 sweep、资源释放边界和禁止回退要求；项目结构补入现有 `src/hidden_snapshot.zig`。历史记录保持原样，本条只追加最终实机状态。
+- 上游核查：重新检查 `LBognanni/fasttab` `main`，HEAD 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`，没有新的上游提交需要采用。
+- 验证：完整核对当前 `src/hidden_snapshot.zig`、`AGENTS.md`、CHANGELOG 与已确认实机行为，文档描述与当前实现一致。本次仅固化文档，不宣称新增代码测试或新的 CI 结果；正常 push 后仍由现有 Public workflow 自动运行，按仓库规则不主动监控。
