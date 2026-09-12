@@ -2,6 +2,7 @@ const std = @import("std");
 const x11 = @import("x11.zig");
 const worker = @import("worker.zig");
 const app = @import("app.zig");
+const hidden_snapshot = @import("hidden_snapshot.zig");
 
 const c = @cImport({
     @cInclude("signal.h");
@@ -233,6 +234,9 @@ fn runDaemon() !void {
     defer application.deinit();
     application.hideWindow();
 
+    var hidden_snapshot_tracker = hidden_snapshot.Tracker{};
+    hidden_snapshot_tracker.seed(&application);
+
     log.debug("Daemon ready: {d} windows tracked", .{application.windowCount()});
 
     const xcb_fd = x11.getXcbFd(conn.conn);
@@ -241,8 +245,9 @@ fn runDaemon() !void {
     };
     while (application.isRunning()) {
         _ = std.posix.poll(&pollfds, 16) catch {};
-        processXcbEvents(&application, &conn);
+        processXcbEvents(&application, &conn, &hidden_snapshot_tracker);
         application.drainUpdateQueue();
+        hidden_snapshot_tracker.update(&application);
         application.update();
     }
 
@@ -253,7 +258,7 @@ fn runDaemon() !void {
     log.debug("Daemon stopped", .{});
 }
 
-fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
+fn processXcbEvents(application: *app.App, conn: *x11.Connection, snapshot_tracker: *hidden_snapshot.Tracker) void {
     while (true) {
         const event = x11.xcb.xcb_poll_for_event(conn.conn);
         if (event == null) break;
@@ -302,11 +307,13 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection) void {
                 const prop_event: *x11.xcb.xcb_property_notify_event_t = @ptrCast(event);
                 if (prop_event.atom == conn.atoms.net_active_window and prop_event.window == conn.root) {
                     application.handleActiveWindowChanged();
+                    snapshot_tracker.handleActiveWindowChanged(application);
                 }
             },
             else => {
                 if (response_type == conn.damage_event_base + x11.xcb.XCB_DAMAGE_NOTIFY) {
                     const damage_event: *x11.xcb.xcb_damage_notify_event_t = @ptrCast(event);
+                    snapshot_tracker.noteDamage(damage_event.drawable);
                     application.handleDamageEvent(damage_event.drawable);
                 }
             },

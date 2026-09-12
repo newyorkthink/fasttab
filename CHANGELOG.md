@@ -266,3 +266,14 @@
 - 最终审计：完整复核当前 `AGENTS.md`、CHANGELOG、两份 README、全部核心 Zig 调用链、现有测试、`build.zig`、`ci.yml`、安装/打包脚本、desktop 元数据、Release 合约及历史 `spec.md` 定位；未发现需要再次修改的运行时代码问题。为避免破坏已实机确认行为，本次不改 X11/GLX、预览、窗口排序、输入、CLI、打包或 workflow 逻辑，只同步最终实机状态并修正两处已经过时的图标来源注释。
 - 文档一致性：`README.md` 与 `README.zh-CN.md` 保持相同内容；AGENTS 明确记录 Zen/Firefox 重启后仍正常，并禁止恢复 Zen 专用留空逻辑或无依据改动已确认图标链路。
 - 上游核查：`LBognanni/fasttab` `main` HEAD 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；本次审计前本仓库相对上游为 `ahead 148 / behind 0`，merge base 为上游 HEAD，没有新提交需要采用。
+
+### 恢复 FastTab 隐藏时的访问窗口预览缓存
+
+- 状态：待实机确认。
+- 修改文件：`src/main.zig`、`src/hidden_snapshot.zig`、`CHANGELOG.md`。
+- 原始现象：用户确认当前版本在 FastTab 从未打开时，普通切换访问过的窗口在离开工作区后可能只有应用图标，没有此前应保存的窗口预览；旧行为是窗口只要实际切换过去一次，即使未打开 FastTab，之后也能显示缓存预览。
+- 根因：为修复浏览器跨工作区灰黑预览，隐藏态改为不为新窗口建立长期 XComposite/GLX 绑定；`_NET_ACTIVE_WINDOW` 变化时当前实现只更新 MRU，没有为实际访问过的窗口生成 `cached_snapshot`，因此这些窗口离开当前工作区后已无法再抓取有效 backing pixmap。
+- 修改内容：保持隐藏态不长期持有 GLX/XComposite backing pixmap；新增隐藏态活动窗口预览跟踪，窗口成为前台时只临时 acquire/reacquire 并建立 Damage 监视，短暂稳定后对首次无缓存窗口保存一张预览并立即 release。已有缓存只有在该活动窗口观察到 XDamage 后才允许刷新；焦点离开前若窗口仍 viewable 且内容发生变化，再补抓最后一帧。该逻辑不修改 Zen/Firefox 图标来源、完整 `WM_CLASS` 缓存身份、工作区排序、CLI、workflow 或 Release。
+- 保护：跨工作区后已不可见的窗口不会被重新抓取；旧的有效缓存不会仅因 GLX reacquire 成功而被覆盖，从而继续保留已经实机确认的浏览器黑帧保护。
+- 验证：新增纯逻辑回归测试覆盖“首次无缓存允许生成预览”和“已有缓存必须收到 damage 才替换”；完整静态核对主事件循环、Damage 处理、GLX `release/reacquire` 生命周期与最终 diff。当前连接器环境没有可用 Zig 编译器，因此不宣称本地 `zig build test` 或 GUI 实机验证通过；push 后由现有 Public CI 正常自动验证，最终行为待真实 Linux/i3 实机确认。
+- 上游核查：`LBognanni/fasttab` `main` HEAD 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；修改前本仓库相对上游为 `ahead 149 / behind 0`，merge base 为上游 HEAD，没有新提交需要采用。
