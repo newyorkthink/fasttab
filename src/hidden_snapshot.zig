@@ -5,14 +5,16 @@ const ui = @import("ui.zig");
 
 const rl = ui.rl;
 
-/// Keeps one last-known preview for windows that the user actually visits while
-/// FastTab stays hidden. GLX/XComposite bindings are only held long enough to
-/// prepare or copy one frame, then released immediately.
+/// Keeps last-known previews while FastTab stays hidden. The focused window gets
+/// activation/final-frame handling, while other currently viewable windows with no
+/// cache are filled incrementally. GLX/XComposite bindings are held only long enough
+/// to prepare or copy one frame, then released immediately.
 pub const Tracker = struct {
     active_window: x11.xcb.xcb_window_t = 0,
     settle_frames: u8 = 0,
     activation_capture_done: bool = false,
     damage_seen: bool = false,
+    sweep_cursor: usize = 0,
 
     const SETTLE_FRAMES: u8 = 2;
 
@@ -34,8 +36,10 @@ pub const Tracker = struct {
         }
     }
 
-    /// Called once per daemon loop before App.update(). This remains cheap while
-    /// hidden: after one activation capture it only observes damage until focus moves.
+    /// Called once per daemon loop before App.update(). Keep the focused window
+    /// semantics from the activation tracker, then use any spare pass to fill one
+    /// missing snapshot for another currently viewable window on the same visible
+    /// workspace. Every capture releases its GLX/XComposite binding immediately.
     pub fn update(self: *Tracker, application: *app.App) void {
         if (!application.window_hidden or application.state != .idle) return;
 
@@ -43,21 +47,53 @@ pub const Tracker = struct {
         if (current != 0 and current != self.active_window) {
             self.switchTo(application, current);
         }
-        if (self.active_window == 0 or self.activation_capture_done) return;
 
-        if (self.settle_frames > 0) {
-            self.settle_frames -= 1;
-            return;
+        var copied_this_pass = false;
+        if (self.active_window != 0 and !self.activation_capture_done) {
+            if (self.settle_frames > 0) {
+                self.settle_frames -= 1;
+            } else if (findItem(application, self.active_window)) |item| {
+                const has_snapshot = item.cached_snapshot != null;
+                if (shouldCaptureOnActivation(has_snapshot, self.damage_seen)) {
+                    if (captureWindow(application, self.active_window)) {
+                        self.activation_capture_done = true;
+                        self.damage_seen = false;
+                        copied_this_pass = true;
+                    }
+                } else {
+                    self.activation_capture_done = true;
+                }
+            }
         }
 
-        const item = findItem(application, self.active_window) orelse return;
-        const has_snapshot = item.cached_snapshot != null;
-        if (!shouldCaptureOnActivation(has_snapshot, self.damage_seen)) return;
-
-        if (captureWindow(application, self.active_window)) {
-            self.activation_capture_done = true;
-            self.damage_seen = false;
+        if (!copied_this_pass) {
+            _ = self.captureOneMissingVisibleWindow(application);
         }
+    }
+
+    fn captureOneMissingVisibleWindow(self: *Tracker, application: *app.App) bool {
+        const count = application.items.items.len;
+        if (count == 0) return false;
+
+        const start = self.sweep_cursor % count;
+        var offset: usize = 0;
+        while (offset < count) : (offset += 1) {
+            const index = (start + offset) % count;
+            self.sweep_cursor = (index + 1) % count;
+
+            const item = &application.items.items[index];
+            const is_active = item.id == self.active_window;
+            if (!shouldSweepMissingSnapshot(
+                item.cached_snapshot != null,
+                is_active,
+                self.activation_capture_done,
+                x11.isWindowViewable(application.conn.conn, item.id),
+            )) continue;
+
+            return captureWindow(application, item.id);
+        }
+
+        return false;
     }
 
     fn switchTo(self: *Tracker, application: *app.App, wid: x11.xcb.xcb_window_t) void {
@@ -187,6 +223,15 @@ fn shouldCaptureOnActivation(has_snapshot: bool, damage_seen: bool) bool {
     return !has_snapshot or damage_seen;
 }
 
+fn shouldSweepMissingSnapshot(
+    has_snapshot: bool,
+    is_active: bool,
+    active_capture_done: bool,
+    is_viewable: bool,
+) bool {
+    return !has_snapshot and is_viewable and (!is_active or active_capture_done);
+}
+
 test "hidden first visit can create a preview without damage" {
     try std.testing.expect(shouldCaptureOnActivation(false, false));
 }
@@ -194,4 +239,15 @@ test "hidden first visit can create a preview without damage" {
 test "existing hidden preview is only replaced after damage" {
     try std.testing.expect(!shouldCaptureOnActivation(true, false));
     try std.testing.expect(shouldCaptureOnActivation(true, true));
+}
+
+test "hidden sweep fills unfocused visible siblings without overwriting cache" {
+    try std.testing.expect(shouldSweepMissingSnapshot(false, false, false, true));
+    try std.testing.expect(!shouldSweepMissingSnapshot(true, false, false, true));
+    try std.testing.expect(!shouldSweepMissingSnapshot(false, false, false, false));
+}
+
+test "hidden sweep waits for the active window settle capture" {
+    try std.testing.expect(!shouldSweepMissingSnapshot(false, true, false, true));
+    try std.testing.expect(shouldSweepMissingSnapshot(false, true, true, true));
 }

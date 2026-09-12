@@ -277,3 +277,14 @@
 - 保护：跨工作区后已不可见的窗口不会被重新抓取；旧的有效缓存不会仅因 GLX reacquire 成功而被覆盖，从而继续保留已经实机确认的浏览器黑帧保护。
 - 验证：新增纯逻辑回归测试覆盖“首次无缓存允许生成预览”和“已有缓存必须收到 damage 才替换”；完整静态核对主事件循环、Damage 处理、GLX `release/reacquire` 生命周期与最终 diff。当前连接器环境没有可用 Zig 编译器，因此不宣称本地 `zig build test` 或 GUI 实机验证通过；push 后由现有 Public CI 正常自动验证，最终行为待真实 Linux/i3 实机确认。
 - 上游核查：`LBognanni/fasttab` `main` HEAD 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；修改前本仓库相对上游为 `ahead 149 / behind 0`，merge base 为上游 HEAD，没有新提交需要采用。
+
+### 补齐同一工作区多窗口隐藏态预览缓存
+
+- 状态：上一版跨工作区访问窗口缓存已由用户实机确认有效；本次多窗口补齐待实机确认。
+- 修改文件：`src/hidden_snapshot.zig`、`CHANGELOG.md`。
+- 用户反馈：提交 `00dbc40a9ecfcd07988c8d60ece0bf185935ac7c` 后，切换到其他工作区时，之前工作区的缓存预览已恢复；但一个工作区同时存在多个可见窗口时，仍会有个别未聚焦窗口只显示应用图标，没有缓存预览。
+- 根因：上一版隐藏态跟踪器只围绕 `_NET_ACTIVE_WINDOW` 生成和刷新快照；同一工作区里从未成为活动窗口、但实际一直可见的兄弟窗口，在离开该工作区前没有 `cached_snapshot`，工作区 unmap 后就无法再抓取。
+- 修改内容：保留活动窗口的 settle / Damage / 离开前最后一帧逻辑；FastTab 隐藏且空闲时，每个 daemon loop 最多额外处理一个“当前仍 viewable 且尚无缓存”的已跟踪窗口，分帧补齐同一可见工作区中的其他窗口。活动窗口在 settle 完成前不会被 sweep 抢先抓取；每次临时 acquire/reacquire、复制快照后仍立即 release GLX/XComposite 绑定。
+- 保护：sweep 只填补缺失缓存，不覆盖已有 `cached_snapshot`，也不触碰已不可见的跨工作区窗口；因此不恢复隐藏态长期绑定，也不削弱已实机确认的浏览器黑帧保护。Zen/Firefox 图标来源、完整 `WM_CLASS` 缓存身份、排序、CLI、workflow 与 Release 均未修改。
+- 验证：新增纯逻辑回归测试覆盖“未聚焦但可见且无缓存的兄弟窗口可被 sweep”“已有缓存和不可见窗口跳过”“活动窗口 settle 完成前不被 sweep 抢先抓取”。当前连接器环境无 Zig 编译器，因此不宣称本地 `zig build test` / ReleaseSafe 构建通过；push 后沿用现有 Public CI 自动验证，GUI 结果仍待 Linux/i3 实机确认。
+- 上游核查：`LBognanni/fasttab` `main` HEAD 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；本次无新上游提交需要采用。
