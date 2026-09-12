@@ -18,7 +18,7 @@ pub const Thumbnail = struct {
 
 pub const ICON_SIZE: u32 = 64;
 
-/// Process an ARGB u32 icon (from _NET_WM_ICON) into an RGBA thumbnail resized to ICON_SIZE x ICON_SIZE.
+/// Process ARGB u32 icon data into an RGBA thumbnail resized to ICON_SIZE x ICON_SIZE.
 pub fn processIconArgb(icon_data: []const u32, src_width: u32, src_height: u32, allocator: std.mem.Allocator) !Thumbnail {
     const pixel_count: usize = @as(usize, src_width) * @as(usize, src_height);
 

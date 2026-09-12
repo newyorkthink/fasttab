@@ -256,3 +256,13 @@
 - 修改内容：恢复并保留完整 `WM_CLASS` instance + class 缓存身份；移除 worker 与主线程的 Zen 专用留空/清除逻辑；新增通用窗口图标入口，默认先读取 `_NET_WM_ICON`，再读取 ICCCM `WM_HINTS`，两者都失败后才进入现有宿主 desktop/icon、AppImage `APPDIR` 和目标进程根文件图标链路。既有 desktop/AppImage/进程根解析实现本身不删除、不改写，预览、XDamage、工作区排序与 CLI 不变。
 - 检查：新增纯逻辑回归测试覆盖 `_NET_WM_ICON` 多尺寸选择和截断数据拒绝；完整 diff 只涉及图标路径及同步文档，没有修改 workflow、Release、GLX 预览或窗口切换语义。由于当前连接器执行环境无法下载仓库依赖并运行 Zig，本条不声称本地 `zig build test` / ReleaseSafe 构建已经完成；push 后由现有 Public CI 自动运行，最终 Zen GUI 显示仍需真实 Linux/i3 环境确认。
 - 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；当前仓库相对上游为 `ahead 147 / behind 0`，没有新的上游提交需要采用。此次图标顺序依据来自用户当前已验证的 `newyorkthink/linux-packaging` AltTab 打包补丁和对应 `sagb/alttab` 图标调用链，不整体合并上游 FastTab。
+
+### 最终核对并固化 Zen/Firefox 图标稳定基线
+
+- 状态：实机确认，CI 通过。
+- 修改文件：`README.md`、`README.zh-CN.md`、`AGENTS.md`、`CHANGELOG.md`、`src/wm_hints_icon.zig`、`src/thumbnail.zig`。
+- 实机确认：提交 `852866cd4c04308bd2846cd164322d4feba060f9` 后，真实 Linux/i3 环境确认 Zen Browser 与 Firefox 均显示各自正确图标；系统完整重启后再次确认仍正常，没有再出现共享 `Navigator` instance 导致的串图。
+- CI / Release：该提交对应 Actions #227 的测试、ReleaseSafe 构建、AppImage 构建和 Latest 发布均成功；Latest 仍只包含 `fasttab.AppImage`。因此 `_NET_WM_ICON` → `WM_HINTS` → 文件图标链路以及完整 `WM_CLASS` instance + class 缓存身份正式固化为稳定基线。
+- 最终审计：完整复核当前 `AGENTS.md`、CHANGELOG、两份 README、全部核心 Zig 调用链、现有测试、`build.zig`、`ci.yml`、安装/打包脚本、desktop 元数据、Release 合约及历史 `spec.md` 定位；未发现需要再次修改的运行时代码问题。为避免破坏已实机确认行为，本次不改 X11/GLX、预览、窗口排序、输入、CLI、打包或 workflow 逻辑，只同步最终实机状态并修正两处已经过时的图标来源注释。
+- 文档一致性：`README.md` 与 `README.zh-CN.md` 保持相同内容；AGENTS 明确记录 Zen/Firefox 重启后仍正常，并禁止恢复 Zen 专用留空逻辑或无依据改动已确认图标链路。
+- 上游核查：`LBognanni/fasttab` `main` HEAD 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；本次审计前本仓库相对上游为 `ahead 148 / behind 0`，merge base 为上游 HEAD，没有新提交需要采用。

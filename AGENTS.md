@@ -46,10 +46,10 @@ FastTab 是 `LBognanni/fasttab` 的维护分支，主要面向 Linux X11 环境�
 - 默认图标来源优先级与当前已验证的 AltTab 默认模式保持一致：先读取窗口 `_NET_WM_ICON`，缺失时读取 ICCCM `WM_HINTS`，两者都没有可用图标时才进入文件图标链路。
 - 文件图标链路先使用宿主系统 `.desktop` / icon 解析；失败后可以从运行中的 AppImage `APPDIR`、`.desktop`、`StartupWMClass`、`.DirIcon` 或 AppImage 内置图标做通用回退。
 - 对 RunImage / 容器内进程，如果宿主没有对应 desktop/icon，可在 AppImage 回退之后仅按目标窗口 PID 从 `/proc/<pid>/root` 读取该进程根目录中的标准 desktop、hicolor 和 pixmaps 图标；不得扫描无关进程。
-- 图标缓存、发布去重和主线程图标 ID 必须使用完整 `WM_CLASS` identity（instance + class），不能只使用第一段 instance；Firefox 与 Zen 等不同应用可能共享 `Navigator` instance。
+- 图标缓存、发布去重和主线程图标 ID 必须使用完整 `WM_CLASS` identity（instance + class），不能只使用第一段 instance；Firefox 与 Zen Browser 等不同应用可能共享 `Navigator` instance。
 - 当前 `_NET_WM_ICON`、`WM_HINTS`、宿主 desktop/icon、AppImage 和进程根回退都必须保持泛化机制，不得改成 kitty、BlueMail、Edge、Zen Browser 或其他单个应用专用判断。
-- kitty、BlueMail、Edge 当前已经在真实 Linux 环境显示小图标，属于已确认基线；后续修复其他应用图标时不得删除这些已生效路径。
-- 不再保留 Zen Browser 专用“强制留空”逻辑；此前留空是临时规避错误 Firefox 图标的策略。当前通用方案依靠 X11 图标优先级与完整 WM_CLASS 缓存身份解决串图，最终 Zen GUI 显示仍以用户实机反馈为准。
+- kitty、BlueMail、Microsoft Edge、Zen Browser、Firefox 小图标均已在真实 Linux 环境实机确认正常；Zen Browser 与 Firefox 使用完整 `WM_CLASS` identity 独立缓存，即使共享 `Navigator` instance 也不会串图，系统重启后仍保持正常。
+- Zen Browser 专用“强制留空”逻辑已经移除，不得恢复。当前稳定方案是 `_NET_WM_ICON` → `WM_HINTS` → 文件图标链路，以及完整 `WM_CLASS` instance + class 缓存身份；没有新的实机故障反馈时，不再改动这条已确认基线。
 
 ### CLI
 

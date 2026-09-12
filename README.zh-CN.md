@@ -20,7 +20,7 @@ FastTab 是一款面向 X11 的高性能窗口切换器，使用 Zig、Raylib �
 - FastTab 隐藏时释放 XComposite/GLX 绑定，再次显示时重新获取最新的窗口 backing pixmap。
 - 缓存截图仅用于跨工作区或窗口暂时未映射时的兜底；已有缓存时，重新绑定成功且收到有效 XDamage 更新后才恢复实时画面。
 - 应用图标默认按 `_NET_WM_ICON` → `WM_HINTS` → desktop/AppImage/目标进程根文件图标的顺序回退，并使用完整 `WM_CLASS` instance + class 作为缓存身份，避免共享 `Navigator` instance 的不同浏览器串用图标。
-- kitty、BlueMail、Microsoft Edge 小图标已实机确认正常，保留现有解析和回退路径。
+- kitty、BlueMail、Microsoft Edge、Zen Browser、Firefox 小图标已在真实 Linux 环境实机确认正常；Zen Browser 与 Firefox 即使共享 `Navigator` instance，也保持各自图标，系统重启后仍正常。
 - 当前工作区优先，其余按顶部标签顺序分组，组内保留最近使用顺序；无有效预览时使用半透明灰色占位。
 - 保留默认选中当前窗口、i3 工作区总览、工作区角标、鼠标操作和多显示器布局。
 - Release 仅保留一个 x86_64 AppImage 文件：`fasttab.AppImage`。

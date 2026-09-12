@@ -135,7 +135,7 @@ fn getPixmapGeometry(conn: *xcb.xcb_connection_t, pixmap: xcb.xcb_pixmap_t) ?str
 }
 
 /// ICCCM fallback matching alttab's addIconFromHints(): read IconPixmapHint and
-/// optional IconMaskHint when desktop/AppImage/_NET_WM_ICON did not provide an icon.
+/// optional IconMaskHint after _NET_WM_ICON and before the file-backed icon chain.
 /// This uses only the worker's XCB connection, so it does not introduce Xlib calls
 /// on the background thread.
 pub fn getWindowIcon(
