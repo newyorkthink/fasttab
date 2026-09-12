@@ -43,13 +43,13 @@ FastTab 是 `LBognanni/fasttab` 的维护分支，主要面向 Linux X11 环境�
 
 ### 应用图标
 
-- 优先使用宿主系统 `.desktop` / icon 解析。
-- 宿主图标解析失败后，可以从运行中的 AppImage `APPDIR`、`.desktop`、`StartupWMClass`、`.DirIcon` 或 AppImage 内置图标做通用回退。
+- 默认图标来源优先级与当前已验证的 AltTab 默认模式保持一致：先读取窗口 `_NET_WM_ICON`，缺失时读取 ICCCM `WM_HINTS`，两者都没有可用图标时才进入文件图标链路。
+- 文件图标链路先使用宿主系统 `.desktop` / icon 解析；失败后可以从运行中的 AppImage `APPDIR`、`.desktop`、`StartupWMClass`、`.DirIcon` 或 AppImage 内置图标做通用回退。
 - 对 RunImage / 容器内进程，如果宿主没有对应 desktop/icon，可在 AppImage 回退之后仅按目标窗口 PID 从 `/proc/<pid>/root` 读取该进程根目录中的标准 desktop、hicolor 和 pixmaps 图标；不得扫描无关进程。
-- `_NET_WM_ICON` 与 ICCCM `WM_HINTS` 的 `IconPixmapHint` / `IconMaskHint` 保留为 X11 最终回退。
-- 当前 AppImage、进程根目录和 X11 图标回退都必须保持泛化机制，不得改成 kitty、BlueMail、Edge、Zen Browser 或其他单个应用专用判断。
-- kitty、BlueMail、Edge 当前已经在真实 Linux 环境显示小图标，属于已确认基线；后续修复其他应用图标时不得重写或删减这些已生效路径。
-- 用户明确要求的例外：Zen Browser 图标识别未解决，应用类名 `zen` / `zen-browser` 的小图标留空，不加载、不复用其他应用图标；保留预览、标题和窗口切换。`032fd59` 的复合缓存键方案已撤销，不再宣称修复成功。
+- 图标缓存、发布去重和主线程图标 ID 必须使用完整 `WM_CLASS` identity（instance + class），不能只使用第一段 instance；Firefox 与 Zen 等不同应用可能共享 `Navigator` instance。
+- 当前 `_NET_WM_ICON`、`WM_HINTS`、宿主 desktop/icon、AppImage 和进程根回退都必须保持泛化机制，不得改成 kitty、BlueMail、Edge、Zen Browser 或其他单个应用专用判断。
+- kitty、BlueMail、Edge 当前已经在真实 Linux 环境显示小图标，属于已确认基线；后续修复其他应用图标时不得删除这些已生效路径。
+- 不再保留 Zen Browser 专用“强制留空”逻辑；此前留空是临时规避错误 Firefox 图标的策略。当前通用方案依靠 X11 图标优先级与完整 WM_CLASS 缓存身份解决串图，最终 Zen GUI 显示仍以用户实机反馈为准。
 
 ### CLI
 
@@ -210,20 +210,21 @@ LBognanni/fasttab
 
 ## 8. 图标处理要求
 
-图标解析优先级必须保持清晰：
+默认图标解析优先级必须保持清晰，并与当前已验证的 AltTab 默认 `ISRC_FALLBACK` 语义一致：
 
-1. 宿主系统 desktop / icon。
-2. 通用 AppImage `APPDIR` 回退。
-3. 目标窗口 PID 对应的 `/proc/<pid>/root` 中标准 desktop / hicolor / pixmaps 回退，仅用于宿主不可见的 RunImage / 容器图标。
-4. X11 `_NET_WM_ICON`。
-5. ICCCM `WM_HINTS` 的 `IconPixmapHint` / `IconMaskHint`。
+1. X11 `_NET_WM_ICON`。
+2. ICCCM `WM_HINTS` 的 `IconPixmapHint` / `IconMaskHint`。
+3. 宿主系统 desktop / icon。
+4. 通用 AppImage `APPDIR` 回退。
+5. 目标窗口 PID 对应的 `/proc/<pid>/root` 中标准 desktop / hicolor / pixmaps 回退，仅用于宿主不可见的 RunImage / 容器图标。
 
 要求：
 
-- 不得写 `if app_name == "kitty"`、`firefox`、`edge`、`zen` 等应用专用补丁作为默认解决方案。
+- 不得写 `if app_name == "kitty"`、`firefox`、`edge`、`zen` 等应用专用补丁作为默认解决方案，也不得通过应用类名强制隐藏图标。
+- 图标缓存 key 必须同时区分 `WM_CLASS` 的 instance 与 class；只按 instance 缓存会让共享 `Navigator` 等实例名的不同应用串用图标。
 - 新增图标路径时必须考虑绝对路径、相对路径、desktop `Icon=`、`StartupWMClass` 和 AppImage `.DirIcon` 的实际语义。
 - `/proc/<pid>/root` 回退只能读取目标窗口自身 PID 的进程根目录，不得遍历其他进程；容器内绝对图标符号链接必须仍在该目标进程根目录语义下解析，不能错误回到宿主绝对路径。
-- 修复新的缺图标应用时不得改坏已经实机确认的 kitty、BlueMail、Edge 图标路径，也不得改变既有 `_NET_WM_ICON` / `WM_HINTS` 最终回退顺序。
+- 修复新的缺图标应用时不得改坏已经实机确认的 kitty、BlueMail、Edge 图标路径；改变图标来源顺序时必须有可核实依据并同步更新 README、AGENTS 和 CHANGELOG。
 - 不得扫描或读取与图标解析无关的用户私有文件。
 
 ## 9. AppImage 与打包规则
@@ -290,6 +291,8 @@ fasttab/
 │   ├── main.zig
 │   ├── app.zig
 │   ├── x11.zig
+│   ├── window_icon.zig
+│   ├── wm_hints_icon.zig
 │   ├── ui.zig
 │   ├── desktop_icon.zig
 │   ├── window_scanner.zig

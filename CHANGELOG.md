@@ -246,3 +246,13 @@
 - 原因：Public 仓库现有 `ci.yml` 已配置 `push` 到 `main` 自动触发，后续提交不应通过提交信息绕过自动 CI，也不需要 AI 在推送后持续查询运行状态。
 - 修改内容：`AGENTS.md` 明确要求所有提交到 `main` 的 commit message 不得包含任何跳过 CI / GitHub Actions 的标记或等价写法；正常 push 后由现有 workflow 自动运行。除非用户明确要求，不手动触发、重跑、查询、轮询、监控或等待 Actions。
 - 验证：完整读取当前 `AGENTS.md`、`CHANGELOG.md` 和 `.github/workflows/ci.yml`；确认本次不修改 workflow，不改动源码、README、打包或 Release 逻辑。本次提交信息不包含任何跳过 CI / Actions 的标记，push 后不主动监控自动运行结果。
+
+### 按已验证 AltTab 顺序修复 Zen/Firefox 图标来源与缓存隔离
+
+- 状态：待实机确认。
+- 修改文件：`src/window_icon.zig`、`src/x11.zig`、`src/worker.zig`、`src/app.zig`、`README.md`、`README.zh-CN.md`、`AGENTS.md`、`CHANGELOG.md`。
+- 新依据：用户确认当前同机 AltTab 已能正确显示 Zen Browser 图标；重新核对 `newyorkthink/linux-packaging` 的 AltTab 稳定补丁与 `sagb/alttab` 源码后，确认其默认 `ISRC_FALLBACK` 顺序为 `_NET_WM_ICON` → `WM_HINTS` → 文件图标。FastTab 此前仍是文件图标优先，并且当前代码还主动将 `zen` / `zen-browser` 图标清空，因此无法复用该已验证行为。
+- 根因补充：`032fd5957b85b59a5189964377fc7f8a8737bf2b` 只解决了共享 `WM_CLASS` instance 的缓存冲突，但当时仍先用 `Navigator` 走 desktop/icon 文件映射；该阶段若已经得到 Firefox 图标，完整缓存 key 也只能把“错误来源”隔离缓存，不能纠正图标来源本身。上一轮随后加入的 Zen 强制留空只是规避错误显示，不是图标识别修复。
+- 修改内容：恢复并保留完整 `WM_CLASS` instance + class 缓存身份；移除 worker 与主线程的 Zen 专用留空/清除逻辑；新增通用窗口图标入口，默认先读取 `_NET_WM_ICON`，再读取 ICCCM `WM_HINTS`，两者都失败后才进入现有宿主 desktop/icon、AppImage `APPDIR` 和目标进程根文件图标链路。既有 desktop/AppImage/进程根解析实现本身不删除、不改写，预览、XDamage、工作区排序与 CLI 不变。
+- 检查：新增纯逻辑回归测试覆盖 `_NET_WM_ICON` 多尺寸选择和截断数据拒绝；完整 diff 只涉及图标路径及同步文档，没有修改 workflow、Release、GLX 预览或窗口切换语义。由于当前连接器执行环境无法下载仓库依赖并运行 Zig，本条不声称本地 `zig build test` / ReleaseSafe 构建已经完成；push 后由现有 Public CI 自动运行，最终 Zen GUI 显示仍需真实 Linux/i3 环境确认。
+- 上游核查：`LBognanni/fasttab` main 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；当前仓库相对上游为 `ahead 147 / behind 0`，没有新的上游提交需要采用。此次图标顺序依据来自用户当前已验证的 `newyorkthink/linux-packaging` AltTab 打包补丁和对应 `sagb/alttab` 图标调用链，不整体合并上游 FastTab。
