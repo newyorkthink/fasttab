@@ -8,3 +8,5 @@ package-root/
 deb-root/
 rpmbuild/
 CLAUDE.md
+__pycache__/
+*.pyc

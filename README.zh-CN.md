@@ -18,7 +18,8 @@ FastTab 是一款面向 X11 的高性能窗口切换器，使用 Zig、Raylib �
 - 当前只有一个窗口时保持卡片居中，并完整显示最后一个工作区标签。
 - 恢复浏览器、视频、Remmina 等所有 X11 客户端共用的 GLX 实时预览，不再按应用名称打补丁。
 - FastTab 隐藏时释放 XComposite/GLX 绑定，再次显示时重新获取最新的窗口 backing pixmap。
-- 缓存截图仅用于跨工作区或窗口暂时未映射时的兜底；已有缓存时，重新绑定成功且收到有效 XDamage 更新后才恢复实时画面。
+- 即使从未打开切换器，当前工作区中实际访问过的窗口、以及同工作区仍可见的未聚焦窗口，也会在后台留下最后一帧预览。
+- 缓存截图用于跨工作区、窗口暂时未映射或 FastTab 隐藏期间的兜底；已有缓存时，重新绑定成功且收到有效 XDamage 更新后才恢复实时画面。
 - 应用图标默认按 `_NET_WM_ICON` → `WM_HINTS` → desktop/AppImage/目标进程根文件图标的顺序回退，并使用完整 `WM_CLASS` instance + class 作为缓存身份，避免共享 `Navigator` instance 的不同浏览器串用图标。
 - kitty、BlueMail、Microsoft Edge、Zen Browser、Firefox 小图标已在真实 Linux 环境实机确认正常；Zen Browser 与 Firefox 即使共享 `Navigator` instance，也保持各自图标，系统重启后仍正常。
 - 当前工作区优先，其余按顶部标签顺序分组，组内保留最近使用顺序；无有效预览时使用半透明灰色占位。
@@ -42,6 +43,7 @@ FastTab 是一款面向 X11 的高性能窗口切换器，使用 Zig、Raylib �
 
 - 常驻后台的轻量守护进程，触发后立即显示。
 - 基于 X11/GLX 的实时 GPU 窗口缩略图。
+- 守护进程在后台为当前可见窗口保留最后预览，不需要先打开一次切换器。
 - 显示窗口标题、应用图标、工作区名称和工作区标记。
 - 图标优先读取窗口自身 `_NET_WM_ICON`，其次读取 ICCCM `WM_HINTS`；两者都没有可用图标时，再按窗口实例名和应用类名查找宿主 desktop/icon、运行中 AppImage 内嵌图标及目标进程根目录中的容器/RunImage desktop/icon。
 - 当前工作区窗口优先，其余窗口按顶部工作区标签顺序分组；同一工作区内保留最近使用顺序。

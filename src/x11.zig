@@ -1511,8 +1511,9 @@ test "WM_CLASS preserves custom instance and application class separately" {
     try std.testing.expectEqualStrings("TerminalApp", windowClassPart("\x00TerminalApp\x00", true));
 }
 
-/// Get the best available icon for a window. Prefers the .desktop file icon
-/// (high quality, correct app identity) and falls back to _NET_WM_ICON.
+/// File-backed icon fallback used after `_NET_WM_ICON` and `WM_HINTS`.
+/// Tries host desktop/icon, AppImage, and process-root lookup first.
+/// If those fail, a last-ditch `_NET_WM_ICON` read is kept as a safety net.
 /// Returns null if no icon is available. Caller owns the returned IconData.
 pub fn getWindowIcon(
     allocator: std.mem.Allocator,
@@ -1521,7 +1522,7 @@ pub fn getWindowIcon(
     atoms: Atoms,
     target_size: u32,
 ) ?IconData {
-    // 1. Try .desktop file (themed, high quality — preferred over app-embedded icon)
+    // 1. Host desktop / AppImage / process-root file icons.
     const class_name = getWindowClass(allocator, conn, window, atoms);
     defer if (!std.mem.eql(u8, class_name, "(unknown)")) allocator.free(class_name);
 
@@ -1555,7 +1556,7 @@ pub fn getWindowIcon(
         };
     }
 
-    // 2. Fallback: _NET_WM_ICON (app-embedded icon)
+    // 2. Last-ditch `_NET_WM_ICON` if the file chain found nothing.
     const cookie = xcb.xcb_get_property(conn, 0, window, atoms.net_wm_icon, xcb.XCB_ATOM_CARDINAL, 0, std.math.maxInt(u32));
     const reply = xcb.xcb_get_property_reply(conn, cookie, null);
     if (reply == null) return null;

@@ -13,13 +13,15 @@
 
 ## 当前稳定基线
 
-截至 2026-09-10：
+截至 2026-09-12（2026-09-18 与当前源码、README、AGENTS 对齐）：
 
 - 项目为 `LBognanni/fasttab` 的维护分支，当前主要面向 X11，核心使用 Zig、XCB、XComposite/GLX、Raylib 和 OpenGL。
 - `Alt+Tab` 用于所有已跟踪窗口，`Win+Tab` 用于当前工作区；当前工作区只有一个窗口时仍保留可视切换界面。
 - 窗口预览采用所有 X11 客户端共用的实时 GLX 路径，不以 Firefox、Edge、Remmina 等应用名称添加专用捕获规则。
-- FastTab 隐藏时释放 XComposite/GLX 绑定，再次显示时重新获取窗口 backing pixmap；缓存截图只作为跨工作区或窗口暂时未映射时的兜底。
-- 应用图标先走宿主系统 desktop/icon 解析；失败后可从运行中的 AppImage `APPDIR`、`.desktop`、`StartupWMClass`、`.DirIcon` 或内置图标继续做通用回退，不为单个应用写死规则。
+- FastTab 隐藏时不长期持有 XComposite/GLX 绑定；隐藏且空闲时由 `src/hidden_snapshot.zig` 为当前活动窗口、以及同工作区仍 `viewable` 的未聚焦窗口生成 `cached_snapshot`，抓完立即释放绑定。即使从未打开切换器，访问过或同工作区可见的窗口离开工作区后仍可显示最后有效预览。
+- 缓存截图只作为跨工作区、窗口暂时未映射或 FastTab 隐藏期间的兜底。已有有效缓存时，GLX reacquire 成功不能立即提升为 live，必须等到真实 XDamage 后完成 rebind。
+- 应用图标默认顺序为 `_NET_WM_ICON` → ICCCM `WM_HINTS` → 宿主 desktop/icon → AppImage `APPDIR` → 目标进程根目录文件图标；缓存身份使用完整 `WM_CLASS` instance + class，不为单个应用写死规则。
+- kitty、BlueMail、Microsoft Edge、Zen Browser、Firefox 小图标已在真实 Linux 环境实机确认正常；Zen 与 Firefox 即使共享 `Navigator` instance 也不会串图。
 - CLI 只保留默认启动、`daemon` / `--daemon` 与 `help` / `-h` / `--help`；已经删除 `version`、`-v`、`-V`、`--version` 和程序内版本显示。
 - `VERSION` 文件仍保留，仅供现有打包流程内部生成包元数据和中间产物名称使用，不作为用户界面或 CLI 版本展示。
 - GitHub Actions 只保留 `.github/workflows/ci.yml`。
@@ -300,3 +302,24 @@
 - 文档整理：`AGENTS.md` 的实时预览基线补齐活动窗口缓存、同工作区多窗口 sweep、资源释放边界和禁止回退要求；项目结构补入现有 `src/hidden_snapshot.zig`。历史记录保持原样，本条只追加最终实机状态。
 - 上游核查：重新检查 `LBognanni/fasttab` `main`，HEAD 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`，没有新的上游提交需要采用。
 - 验证：完整核对当前 `src/hidden_snapshot.zig`、`AGENTS.md`、CHANGELOG 与已确认实机行为，文档描述与当前实现一致。本次仅固化文档，不宣称新增代码测试或新的 CI 结果；正常 push 后仍由现有 Public workflow 自动运行，按仓库规则不主动监控。
+
+## 2026-09-18
+
+### 核查 `LBognanni/fasttab`
+
+- 状态：完成。
+- 上游：`LBognanni/fasttab`，默认分支 `main`。
+- 上游当前 HEAD：`e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`。
+- 上游最后提交时间：2026-05-16。
+- 对比结果：本仓库 `main` 已包含该上游 HEAD；相对上游为 `ahead 178 / behind 0`。
+- 结论：当前没有任何上游新提交需要合并或移植，禁止为了“同步上游”重新合并旧代码。
+
+### 对齐稳定基线文档并清理仓库卫生问题
+
+- 状态：完成。
+- 修改文件：`CHANGELOG.md`、`README.md`、`README.zh-CN.md`、`src/x11.zig`、`.gitignore`；删除 `.github/scripts/__pycache__/apply_live_preview_restore_2_0_5.cpython-312.pyc`。
+- 原因：2026-09-18 核查确认运行时实现与已实机基线一致，没有需要立即修复的功能错误；但顶部稳定基线摘要仍停留在 2026-09-10 的旧图标顺序，README 未说明隐藏态预览缓存，`src/x11.zig` 文件图标回退仍写 desktop 优先，仓库里还残留一份已删除脚本的 Python 字节码。
+- 修改内容：把本文件顶部「当前稳定基线」与当前源码、`AGENTS.md` 对齐（隐藏态预览缓存、`_NET_WM_ICON` → `WM_HINTS` → 文件图标、完整 `WM_CLASS` 缓存身份）；两份 README 补上“从未打开切换器也会为当前可见窗口保留最后预览”；更正 `x11.getWindowIcon` 注释，明确它是 `_NET_WM_ICON` / `WM_HINTS` 之后的文件图标回退，不改运行时查找顺序；`.gitignore` 忽略 `__pycache__/` 与 `*.pyc`，并删除已无对应源文件的 pyc。
+- 未改内容：窗口切换、GLX 生命周期、图标解析实现、测试、workflow、打包和 Release 逻辑均未改动。历史变更记录保持原样，只更新顶部当前基线摘要并追加本条。
+- 验证：静态核对 README、AGENTS、源码入口 `window_icon.getWindowIcon` 与隐藏态 `src/hidden_snapshot.zig` 描述一致；两份 README 内容相同。本次不宣称新的 GUI 实机结果。
+- 上游核查：见上一条；无新上游提交需要采用。
