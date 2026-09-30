@@ -339,3 +339,27 @@
 - 范围与限制：隔离验证确认的是通用资源生命周期缺口，不等于已经在真实 Firefox/i3 视频场景确认停帧根因或效果。源窗口仍需 viewable 且持续绘制；隐藏工作区、最小化或应用自身停止绘制时，不能凭旧缓存生成动态视频。未采用根窗口全局重定向或按应用名称的捕获规则。
 - 上游核查：`LBognanni/fasttab` main HEAD 为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；修改前 `ahead 153 / behind 0`，merge base 为该上游 HEAD，没有新上游提交需要采用。
 - Actions：正常提交到 main，由现有 Public workflow 自动运行；不手动触发、重跑、查询或监控运行结果。本条不宣称新的 CI 或真实桌面验证通过，以本条所在 Git commit 为准。
+
+### 取消 Zig 固定版本并适配最新稳定版
+
+- 状态：待实机确认；取消固定版本和本地适配完成。
+- 修改文件：`.github/workflows/ci.yml`、`.devcontainer/Dockerfile`、`build.zig`、`src/runtime.zig`、`src/main.zig`、`src/app.zig`、`src/worker.zig`、`src/x11.zig`、`src/ui.zig`、`src/window_scanner.zig`、`src/desktop_icon.zig`、`src/tests/app_filter_test.zig`、`README.md`、`README.zh-CN.md`、`AGENTS.md`、`CHANGELOG.md`。
+- 原因：用户明确要求不锁 Zig 版本；仅将 CI 的版本值改成 `latest` 会遇到新版 Zig 已移除的构建、I/O、线程同步和容器接口，必须同步适配实际源码。
+- 修改内容：CI 的两个 Zig 配置均使用 `version: latest`；开发容器从 Zig 官方下载索引选择最新稳定版并校验 SHA256。构建使用 `root_module` 接口；新增公共运行时接入 `std.process.Init` 提供的 `std.Io`，迁移文件、时钟、等待、互斥锁、环境变量和既有测试的子进程接口，保留显式 allocator 与资源释放。使用新版托管列表和 C 调用约定，并补齐 XCB extension 声明；主循环的 poll 与单实例锁继续使用现有 libc 语义。源码构建说明和维护规范同步取消版本固定。
+- 本地验证：官方最新稳定版 Zig 0.16.0 下 87 项既有测试全部通过，ReleaseSafe / baseline 构建通过；`--help` 成功，`--version` 和未知参数仍返回退出码 2。开发容器下载命令通过 shell 语法与官方索引选择校验，未声称完整 Docker 镜像已构建。
+- 隔离运行验证：在独立 Xvfb/i3 会话运行本次编译的实际 daemon，触发 Alt+Tab 后，5 秒内 100 次界面采样得到 89 种不同画面，按 Esc 撤销后 daemon 继续运行；第二次启动 daemon 被单实例锁拒绝，返回退出码 1，原进程继续运行。实际 WindowTexture / App 验证继续通过尺寸变化恢复、同尺寸重新映射恢复、移动不更换绑定、隐藏态不保留绑定，以及已有缓存等待真实 Damage 才恢复 live 的保护。
+- 限制：上述隔离测试不等于用户真实环境确认，也不代表下条记录中的后台标签视频问题已经解决。未新增应用名称专用捕获、CPU 截图路径或后台长期 GLX 绑定；图标来源、快捷键路由、CLI 和 Release 合约保持既有行为。
+- 上游核查：`LBognanni/fasttab` main HEAD 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；提交前本仓库为 `ahead 154 / behind 0`，merge base 为该上游 HEAD，无新上游提交需要采用。
+- Actions：正常提交到 main，由现有 Public workflow 自动运行；推送后不主动查询、等待、监控、触发或重跑。本条不宣称 CI 通过，以本条所在 Git commit 为准。
+
+### 复现 i3 后台标签视频停帧并纠正上一版修复范围
+
+- 状态：未解决；停帧原因已在隔离环境复现。
+- 修改文件：`README.md`、`README.zh-CN.md`、`AGENTS.md`、`CHANGELOG.md`；没有把隔离状态修改实验加入正式预览逻辑。
+- 用户反馈：提交 `041cacbdf1dbe86d25ee1eb2d2ce22612a44846a` 后可以看到预览，但仍只是一张图片；用户使用 i3 标签／堆叠布局。上一条窗口尺寸与重新映射处理修复了真实的资源生命周期缺口，但没有解决这次视频停帧。
+- 复现：在独立 Xvfb、i3 4.23、Firefox 157.0 和循环测试视频中，后台标签的客户端仍为 `viewable`、ICCCM `WM_STATE` 仍为 Normal，但 i3 设置了 `_NET_WM_STATE_HIDDEN`；Firefox 页面变为 `document.hidden = true`，视频播放时间继续前进，窗口却不再提交新画面。实际最新版 Zig 编译的 GLX 捕获探针在 5 秒内只有初始 1 次 Damage / 1 帧变化；堆叠布局复测同样只有 1 次 Damage / 1 帧变化；改成并排布局后为 134 次 Damage / 134 帧变化。
+- 原因验证：仅在独立测试窗口临时移除 `HIDDEN`，Firefox 恢复可见状态，5 秒内得到 129 次 Damage / 129 帧变化；恢复该标志后再次隐藏。这个实验确认源应用停止绘制是停帧原因，不是正式解决方案。`HIDDEN` 由窗口管理器维护，直接改写会绕过 EWMH 状态管理，不能仅凭一次实验将其加入通用捕获路径。
+- 参考对照：实际编译并运行 `felixfung/skippy-xd` master `a135eca1c540c646d0214dd4d235eb33ab792835` 的 daemon / expose，同一后台标签视频也未恢复连续绘制；picom 10.2 的隔离对照同样没有解除 `HIDDEN` 或恢复该视频更新。因此本次不把照搬 skippy-xd 或启用 picom 描述成已验证修复。
+- 当前行为：源窗口持续绘制时，FastTab 的通用 GLX/GPU 路径提供动态预览；同工作区本身不足以保证源应用持续绘制。后台标签、最小化或不可见工作区的源应用停止更新时，只能保留最后有效画面。两份 README 与 AGENTS 明确记录此限制，历史记录保持原样。
+- 保护：继续保留上一版结构变化恢复、隐藏态临时抓图、缺失缓存 sweep 和 Damage 后恢复 live 的已验证逻辑；不采用根窗口全局捕获、应用名称分支或强制修改用户浏览器配置。所有实验均使用独立测试进程，未修改用户桌面或正在运行的浏览器。
+- 上游核查：同上一条；当前上游没有可采用的新提交，本问题仍不得标记为完成或实机确认。

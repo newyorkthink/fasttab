@@ -35,6 +35,7 @@ FastTab 是 `LBognanni/fasttab` 的维护分支，主要面向 Linux X11 环境�
 - 用户已确认此前浏览器窗口预览黑屏问题修复，现有缓存与 XDamage 恢复保护属于稳定基线；没有新的故障反馈时，不再列为未解决问题，也不得为文档整理改动相关代码。
 - 用户已实机确认提交 `00dbc40a9ecfcd07988c8d60ece0bf185935ac7c` 与 `883657dd925557e48e5b88103d129787d368a3a8` 的隐藏态预览行为：即使 FastTab 从未打开，只要窗口在当前工作区实际成为活动窗口，或作为同一工作区中仍为 `viewable` 的其他窗口存在，之后切换到其他工作区时仍可显示最后有效预览；同一工作区多个可见窗口不会再因为未聚焦而漏掉缓存。
 - 所有 X11 客户端共用一套通用 GLX 实时预览路径。
+- 用户反馈提交 `041cacbdf1dbe86d25ee1eb2d2ce22612a44846a` 后，i3 标签／堆叠布局中的视频仍只有静态预览，该场景仍为未解决。i3 可以在客户端仍 `viewable` 时设置 `_NET_WM_STATE_HIDDEN`，浏览器随后停止绘制；不能把同工作区或成功绑定当作持续有新帧的证明，也不能把此前尺寸变化修复写成该问题已经解决。
 - 不应重新加入 Firefox、Edge、Remmina、root framebuffer 等基于应用名称的专用捕获规则，除非用户明确要求且有可核实的技术原因。
 - FastTab 隐藏时不长期持有 XComposite/GLX binding；需要生成隐藏态缓存时只临时 acquire/reacquire，复制到 `cached_snapshot` 后立即 release。
 - 隐藏且空闲时，活动窗口在短暂 settle 后生成首次缓存；已有缓存只有观察到该活动窗口的 XDamage 后才允许刷新，焦点离开前如内容发生变化且窗口仍 `viewable`，再补抓最后一帧。
@@ -191,6 +192,7 @@ LBognanni/fasttab
 
 ### Zig
 
+- 按用户要求不固定 Zig 版本。CI 使用 `version: latest`，开发容器从官方索引选择最新稳定版并校验下载；标准库或构建接口升级时，同步适配并在本地完成构建和既有测试，不靠固定旧版本规避问题。
 - 遵循现有 Zig 风格和 `zig fmt` 结果。
 - 保持显式 allocator 传递和现有内存生命周期。
 - 使用 `defer` / `errdefer` 保证资源释放。
@@ -293,6 +295,7 @@ LBognanni/fasttab
 fasttab/
 ├── src/
 │   ├── main.zig
+│   ├── runtime.zig
 │   ├── app.zig
 │   ├── hidden_snapshot.zig
 │   ├── x11.zig

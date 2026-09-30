@@ -1,28 +1,28 @@
 const std = @import("std");
 
 fn linkFastTabDependencies(step: *std.Build.Step.Compile, b: *std.Build) void {
-    step.addIncludePath(b.path("include"));
-    step.addIncludePath(b.path("lib/raylib-5.5/include"));
+    step.root_module.addIncludePath(b.path("include"));
+    step.root_module.addIncludePath(b.path("lib/raylib-5.5/include"));
 
-    step.linkSystemLibrary("xcb");
-    step.linkSystemLibrary("xcb-composite");
-    step.linkSystemLibrary("xcb-image");
-    step.linkSystemLibrary("xcb-keysyms");
-    step.linkSystemLibrary("xcb-damage");
+    step.root_module.linkSystemLibrary("xcb", .{});
+    step.root_module.linkSystemLibrary("xcb-composite", .{});
+    step.root_module.linkSystemLibrary("xcb-image", .{});
+    step.root_module.linkSystemLibrary("xcb-keysyms", .{});
+    step.root_module.linkSystemLibrary("xcb-damage", .{});
 
-    step.addObjectFile(b.path("lib/raylib-5.5/lib/libraylib.a"));
-    step.linkSystemLibrary("GL");
-    step.linkSystemLibrary("m");
-    step.linkSystemLibrary("pthread");
-    step.linkSystemLibrary("dl");
-    step.linkSystemLibrary("rt");
-    step.linkSystemLibrary("X11");
-    step.linkSystemLibrary("X11-xcb");
-    step.linkSystemLibrary("Xrandr");
-    step.linkSystemLibrary("Xinerama");
-    step.linkSystemLibrary("Xi");
-    step.linkSystemLibrary("Xcursor");
-    step.linkLibC();
+    step.root_module.addObjectFile(b.path("lib/raylib-5.5/lib/libraylib.a"));
+    step.root_module.linkSystemLibrary("GL", .{});
+    step.root_module.linkSystemLibrary("m", .{});
+    step.root_module.linkSystemLibrary("pthread", .{});
+    step.root_module.linkSystemLibrary("dl", .{});
+    step.root_module.linkSystemLibrary("rt", .{});
+    step.root_module.linkSystemLibrary("X11", .{});
+    step.root_module.linkSystemLibrary("X11-xcb", .{});
+    step.root_module.linkSystemLibrary("Xrandr", .{});
+    step.root_module.linkSystemLibrary("Xinerama", .{});
+    step.root_module.linkSystemLibrary("Xi", .{});
+    step.root_module.linkSystemLibrary("Xcursor", .{});
+    step.root_module.link_libc = true;
 }
 
 pub fn build(b: *std.Build) void {
@@ -31,9 +31,11 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "fasttab",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     linkFastTabDependencies(exe, b);
     b.installArtifact(exe);
@@ -46,9 +48,11 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const exe_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     linkFastTabDependencies(exe_unit_tests, b);
 
@@ -57,25 +61,31 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_exe_unit_tests.step);
 
     const desktop_icon_tests = b.addTest(.{
-        .root_source_file = b.path("src/desktop_icon.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/desktop_icon.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     linkFastTabDependencies(desktop_icon_tests, b);
     test_step.dependOn(&b.addRunArtifact(desktop_icon_tests).step);
 
     const app_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/app.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/app.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     linkFastTabDependencies(app_unit_tests, b);
     test_step.dependOn(&b.addRunArtifact(app_unit_tests).step);
 
     const ui_test = b.addTest(.{
-        .root_source_file = b.path("src/tests/ui_test.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tests/ui_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     const ui_module = b.createModule(.{
         .root_source_file = b.path("src/ui.zig"),
@@ -89,9 +99,11 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(ui_test).step);
 
     const navigation_test = b.addTest(.{
-        .root_source_file = b.path("src/tests/navigation_test.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tests/navigation_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     navigation_test.root_module.addImport("navigation", b.createModule(.{
         .root_source_file = b.path("src/navigation.zig"),
@@ -101,9 +113,11 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(navigation_test).step);
 
     const hardening_test = b.addTest(.{
-        .root_source_file = b.path("src/tests/hardening_test.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tests/hardening_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     hardening_test.root_module.addImport("navigation", b.createModule(.{
         .root_source_file = b.path("src/navigation.zig"),
@@ -118,9 +132,11 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(hardening_test).step);
 
     const app_filter_test = b.addTest(.{
-        .root_source_file = b.path("src/tests/app_filter_test.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tests/app_filter_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     const app_module = b.createModule(.{
         .root_source_file = b.path("src/app.zig"),

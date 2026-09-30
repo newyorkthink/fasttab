@@ -1,4 +1,5 @@
 const std = @import("std");
+const runtime = @import("runtime.zig");
 const x11 = @import("x11.zig");
 const ui = @import("ui.zig");
 const worker = @import("worker.zig");
@@ -41,7 +42,7 @@ pub const MonitorInfo = struct {
 /// Application state encapsulating all raylib window and UI management
 pub const App = struct {
     allocator: std.mem.Allocator,
-    items: std.ArrayList(ui.DisplayWindow),
+    items: std.array_list.Managed(ui.DisplayWindow),
     selected_index: usize,
     mouseover_index: ?usize,
     mouse_left_was_down: bool,
@@ -52,7 +53,7 @@ pub const App = struct {
     daemon_mode: bool,
     should_quit: bool,
     update_queue: ?*worker.TaskQueue,
-    temp_tasks: std.ArrayList(worker.UpdateTask),
+    temp_tasks: std.array_list.Managed(worker.UpdateTask),
     conn: *x11.Connection,
     state: SwitcherState,
     icon_texture_cache: std.StringHashMap(rl.Texture2D),
@@ -64,8 +65,8 @@ pub const App = struct {
     reacquire_cursor: usize,
     switch_origin_window: x11.xcb.xcb_window_t,
     switch_origin_snapshot_ready: bool,
-    mru_list: std.ArrayList(x11.xcb.xcb_window_t),
-    workspace_names: std.ArrayList([]u8),
+    mru_list: std.array_list.Managed(x11.xcb.xcb_window_t),
+    workspace_names: std.array_list.Managed([]u8),
     current_workspace: ?u32,
 
     // Shift-tap tracking: press-and-release Shift (without Tab) selects previous window
@@ -74,7 +75,7 @@ pub const App = struct {
 
     // Win+Tab current-workspace filtering
     switch_mode: SwitchMode,
-    filtered_items: std.ArrayList(ui.DisplayWindow), // non-owning shallow copies; strings owned by items
+    filtered_items: std.array_list.Managed(ui.DisplayWindow), // non-owning shallow copies; strings owned by items
 
     const MRU_CAP: usize = 128;
 
@@ -87,10 +88,10 @@ pub const App = struct {
         daemon_mode: bool,
         conn: *x11.Connection,
     ) !Self {
-        const items = std.ArrayList(ui.DisplayWindow).init(allocator);
+        const items = std.array_list.Managed(ui.DisplayWindow).init(allocator);
         const icon_texture_cache = std.StringHashMap(rl.Texture2D).init(allocator);
         const window_textures = std.AutoHashMap(x11.xcb.xcb_window_t, x11.WindowTexture).init(allocator);
-        const temp_tasks = std.ArrayList(worker.UpdateTask).init(allocator);
+        const temp_tasks = std.array_list.Managed(worker.UpdateTask).init(allocator);
 
         // Create raylib window (hidden initially via FLAG_WINDOW_HIDDEN)
         rl.SetConfigFlags(rl.FLAG_WINDOW_UNDECORATED | rl.FLAG_WINDOW_TRANSPARENT | rl.FLAG_WINDOW_TOPMOST | rl.FLAG_WINDOW_HIDDEN);
@@ -117,8 +118,8 @@ pub const App = struct {
             .height = 1080,
         };
 
-        var mru_list = std.ArrayList(x11.xcb.xcb_window_t).init(allocator);
-        const workspace_names = std.ArrayList([]u8).init(allocator);
+        var mru_list = std.array_list.Managed(x11.xcb.xcb_window_t).init(allocator);
+        const workspace_names = std.array_list.Managed([]u8).init(allocator);
 
         // Seed MRU list with the currently active window (single entry)
         const initial_active = x11.getActiveWindow(conn.conn, conn.root, conn.atoms);
@@ -157,7 +158,7 @@ pub const App = struct {
             .shift_held = false,
             .tab_pressed_during_shift = false,
             .switch_mode = .all_windows,
-            .filtered_items = std.ArrayList(ui.DisplayWindow).init(allocator),
+            .filtered_items = std.array_list.Managed(ui.DisplayWindow).init(allocator),
         };
 
         self.drainUpdateQueue();
@@ -241,11 +242,11 @@ pub const App = struct {
                     // Fall through to render the first frame immediately
                 } else {
                     remaining.* -= 1;
-                    std.time.sleep(16 * std.time.ns_per_ms);
+                    runtime.sleep(16 * std.time.ns_per_ms);
                     return;
                 }
             } else {
-                std.time.sleep(16 * std.time.ns_per_ms);
+                runtime.sleep(16 * std.time.ns_per_ms);
                 return;
             }
         }
@@ -522,25 +523,25 @@ pub const App = struct {
     /// attached to stale or recycled backing pixmaps.
     pub fn hideWindow(self: *Self) void {
         log.debug("Hiding window", .{});
-        const start_ns = std.time.nanoTimestamp();
+        const start_ns = runtime.nanoTimestamp();
 
         if (self.update_queue) |queue| {
             queue.setWindowVisible(false);
         }
-        const after_notify_ns = std.time.nanoTimestamp();
+        const after_notify_ns = runtime.nanoTimestamp();
 
         rl.SetWindowState(rl.FLAG_WINDOW_HIDDEN);
-        const after_hide_ns = std.time.nanoTimestamp();
+        const after_hide_ns = runtime.nanoTimestamp();
 
         self.window_hidden = true;
         self.reacquire_pending = false;
         self.mouse_left_was_down = false;
 
         self.cacheAllSnapshots();
-        const after_snapshot_ns = std.time.nanoTimestamp();
+        const after_snapshot_ns = runtime.nanoTimestamp();
 
         self.releaseAllBindings();
-        const after_release_ns = std.time.nanoTimestamp();
+        const after_release_ns = runtime.nanoTimestamp();
 
         const total_us = @divTrunc(after_release_ns - start_ns, std.time.ns_per_us);
         if (total_us >= PROFILE_SLOW_HIDE_WINDOW_US) {
@@ -561,17 +562,17 @@ pub const App = struct {
     /// Show the switcher window (public for socket commands)
     /// Show the switcher window (public for socket commands)
     pub fn showWindow(self: *Self) void {
-        const start_ns = std.time.nanoTimestamp();
+        const start_ns = runtime.nanoTimestamp();
         log.debug("Showing window with {d} items", .{self.displayItems().len});
 
         if (self.update_queue) |queue| {
             queue.setWindowVisible(true);
         }
-        const after_notify_ns = std.time.nanoTimestamp();
+        const after_notify_ns = runtime.nanoTimestamp();
 
         const mouse_pos = x11.getMousePosition(self.conn.conn, self.conn.root);
         self.monitor = findMonitorAtPosition(mouse_pos);
-        const after_monitor_ns = std.time.nanoTimestamp();
+        const after_monitor_ns = runtime.nanoTimestamp();
 
         self.refreshWorkspaceInfo();
         self.refreshItemWorkspaces();
@@ -584,21 +585,21 @@ pub const App = struct {
             self.font,
             self.workspace_names.items,
         );
-        const after_layout_ns = std.time.nanoTimestamp();
+        const after_layout_ns = runtime.nanoTimestamp();
 
         rl.ClearWindowState(rl.FLAG_WINDOW_HIDDEN);
-        const after_map_ns = std.time.nanoTimestamp();
+        const after_map_ns = runtime.nanoTimestamp();
 
         rl.SetWindowSize(@intCast(self.current_layout.total_width), @intCast(self.current_layout.total_height));
-        const after_size_ns = std.time.nanoTimestamp();
+        const after_size_ns = runtime.nanoTimestamp();
 
         const win_x = self.monitor.x + @divTrunc(self.monitor.width - @as(i32, @intCast(self.current_layout.total_width)), 2);
         const win_y = self.monitor.y + @divTrunc(self.monitor.height - @as(i32, @intCast(self.current_layout.total_height)), 2);
         rl.SetWindowPosition(win_x, win_y);
-        const after_position_ns = std.time.nanoTimestamp();
+        const after_position_ns = runtime.nanoTimestamp();
 
         rl.SetWindowFocused();
-        const after_focus_ns = std.time.nanoTimestamp();
+        const after_focus_ns = runtime.nanoTimestamp();
 
         self.focus_grace_frames = 5;
         self.window_hidden = false;
@@ -860,7 +861,7 @@ pub const App = struct {
     pub fn confirmSwitching(self: *Self) void {
         if (self.state != .switching) return;
 
-        const start_ns = std.time.nanoTimestamp();
+        const start_ns = runtime.nanoTimestamp();
 
         const display = self.displayItems();
         if (display.len > 0 and self.selected_index < display.len) {
@@ -891,16 +892,16 @@ pub const App = struct {
             x11.activateWindow(self.conn.conn, self.conn.root, selected_id, self.conn.atoms);
             log.debug("Confirmed: activating window {x}", .{selected_id});
         }
-        const after_activate_ns = std.time.nanoTimestamp();
+        const after_activate_ns = runtime.nanoTimestamp();
 
         x11.ungrabKeyboard(self.conn.conn);
-        const after_ungrab_ns = std.time.nanoTimestamp();
+        const after_ungrab_ns = runtime.nanoTimestamp();
 
         self.show_delay_frames = null;
         if (!self.window_hidden) {
             self.hideWindow();
         }
-        const after_hide_ns = std.time.nanoTimestamp();
+        const after_hide_ns = runtime.nanoTimestamp();
 
         self.state = .idle;
         self.shift_held = false;
@@ -924,16 +925,16 @@ pub const App = struct {
     pub fn cancelSwitching(self: *Self) void {
         if (self.state != .switching) return;
 
-        const start_ns = std.time.nanoTimestamp();
+        const start_ns = runtime.nanoTimestamp();
         log.debug("Switching cancelled", .{});
         x11.ungrabKeyboard(self.conn.conn);
-        const after_ungrab_ns = std.time.nanoTimestamp();
+        const after_ungrab_ns = runtime.nanoTimestamp();
 
         self.show_delay_frames = null;
         if (!self.window_hidden) {
             self.hideWindow();
         }
-        const after_hide_ns = std.time.nanoTimestamp();
+        const after_hide_ns = runtime.nanoTimestamp();
 
         self.state = .idle;
         self.shift_held = false;
@@ -1030,7 +1031,7 @@ pub const App = struct {
 
         if (stacking.len == 0) return;
 
-        var new_items = std.ArrayList(ui.DisplayWindow).init(self.allocator);
+        var new_items = std.array_list.Managed(ui.DisplayWindow).init(self.allocator);
         defer new_items.deinit();
         new_items.ensureTotalCapacity(self.items.items.len) catch return;
 
@@ -1197,7 +1198,7 @@ pub const App = struct {
     fn processReacquireQueue(self: *Self) void {
         if (!self.reacquire_pending or self.window_hidden) return;
 
-        const start_ns = std.time.nanoTimestamp();
+        const start_ns = runtime.nanoTimestamp();
         var layout_dirty = false;
         var reacquired_count: usize = 0;
         var failed_count: usize = 0;
@@ -1206,7 +1207,7 @@ pub const App = struct {
         var attempts_remaining = self.items.items.len;
         var prefer_selected = true;
 
-        while (attempts_remaining > 0 and std.time.nanoTimestamp() - start_ns < REACQUIRE_FRAME_BUDGET_NS) {
+        while (attempts_remaining > 0 and runtime.nanoTimestamp() - start_ns < REACQUIRE_FRAME_BUDGET_NS) {
             const target_id = self.nextPendingReacquireWindowId(prefer_selected) orelse break;
             prefer_selected = false;
             attempts_remaining -= 1;
@@ -1216,7 +1217,7 @@ pub const App = struct {
                 continue;
             }
 
-            const window_start_ns = std.time.nanoTimestamp();
+            const window_start_ns = runtime.nanoTimestamp();
             if (self.window_textures.getPtr(target_id)) |tex| {
                 if (!tex.reacquire(self.conn)) {
                     self.markThumbnailReady(target_id, false);
@@ -1224,7 +1225,7 @@ pub const App = struct {
                     continue;
                 }
 
-                const window_us = @divTrunc(std.time.nanoTimestamp() - window_start_ns, std.time.ns_per_us);
+                const window_us = @divTrunc(runtime.nanoTimestamp() - window_start_ns, std.time.ns_per_us);
                 if (window_us > max_window_us) {
                     max_window_us = window_us;
                     max_window_id = target_id;
@@ -1259,7 +1260,7 @@ pub const App = struct {
                     continue;
                 };
 
-                const window_us = @divTrunc(std.time.nanoTimestamp() - window_start_ns, std.time.ns_per_us);
+                const window_us = @divTrunc(runtime.nanoTimestamp() - window_start_ns, std.time.ns_per_us);
                 if (window_us > max_window_us) {
                     max_window_us = window_us;
                     max_window_id = target_id;
@@ -1286,7 +1287,7 @@ pub const App = struct {
         if (layout_dirty) self.updateLayout();
         self.reacquire_pending = self.hasPendingReacquire();
 
-        const frame_us = @divTrunc(std.time.nanoTimestamp() - start_ns, std.time.ns_per_us);
+        const frame_us = @divTrunc(runtime.nanoTimestamp() - start_ns, std.time.ns_per_us);
         if (false and (frame_us >= PROFILE_SLOW_REACQUIRE_FRAME_US or failed_count > 0)) {
             log.debug(
                 "profile reacquire frame(us): total={d} reacquired={d} failed={d} max_window={d} max_window_id={x} pending={}",
@@ -1434,7 +1435,7 @@ pub const App = struct {
     fn reorderByMru(self: *Self) void {
         if (self.items.items.len == 0) return;
 
-        var new_items = std.ArrayList(ui.DisplayWindow).init(self.allocator);
+        var new_items = std.array_list.Managed(ui.DisplayWindow).init(self.allocator);
         defer new_items.deinit();
         new_items.ensureTotalCapacity(self.items.items.len) catch return;
 
@@ -1622,7 +1623,7 @@ pub fn groupItemsByWorkspace(items: []DisplayWindow, current_workspace: ?u32) vo
 pub fn filterItemsByWorkspace(
     items: []const ui.DisplayWindow,
     current_workspace: u32,
-    out: *std.ArrayList(ui.DisplayWindow),
+    out: *std.array_list.Managed(ui.DisplayWindow),
 ) void {
     for (items) |item| {
         const belongs = if (item.workspace) |workspace|
@@ -1669,11 +1670,11 @@ pub fn findMonitorAtPosition(pos: x11.MousePosition) MonitorInfo {
 
 test "workspace layout uses refreshed source dimensions" {
     var application: App = undefined;
-    application.items = std.ArrayList(DisplayWindow).init(std.testing.allocator);
+    application.items = std.array_list.Managed(DisplayWindow).init(std.testing.allocator);
     defer application.items.deinit();
-    application.filtered_items = std.ArrayList(DisplayWindow).init(std.testing.allocator);
+    application.filtered_items = std.array_list.Managed(DisplayWindow).init(std.testing.allocator);
     defer application.filtered_items.deinit();
-    application.workspace_names = std.ArrayList([]u8).init(std.testing.allocator);
+    application.workspace_names = std.array_list.Managed([]u8).init(std.testing.allocator);
     defer application.workspace_names.deinit();
     application.current_workspace = 1;
     application.switch_mode = .current_workspace;
@@ -1707,9 +1708,9 @@ test "workspace layout uses refreshed source dimensions" {
 
 test "reacquisition skips known off-workspace windows" {
     var application: App = undefined;
-    application.items = std.ArrayList(DisplayWindow).init(std.testing.allocator);
+    application.items = std.array_list.Managed(DisplayWindow).init(std.testing.allocator);
     defer application.items.deinit();
-    application.filtered_items = std.ArrayList(DisplayWindow).init(std.testing.allocator);
+    application.filtered_items = std.array_list.Managed(DisplayWindow).init(std.testing.allocator);
     defer application.filtered_items.deinit();
     application.window_textures = std.AutoHashMap(x11.xcb.xcb_window_t, x11.WindowTexture).init(std.testing.allocator);
     defer application.window_textures.deinit();
@@ -1733,9 +1734,9 @@ test "reacquisition skips known off-workspace windows" {
 }
 
 test "reacquired texture waits for damage when a fallback snapshot exists" {
-try std.testing.expect(App.canPromoteReacquiredTexture(null));
+    try std.testing.expect(App.canPromoteReacquiredTexture(null));
     const snapshot = std.mem.zeroes(rl.RenderTexture2D);
-try std.testing.expect(!App.canPromoteReacquiredTexture(snapshot));
+    try std.testing.expect(!App.canPromoteReacquiredTexture(snapshot));
 }
 
 test "failed window append leaves task strings owned until cleanup" {
@@ -1752,15 +1753,15 @@ test "failed window append leaves task strings owned until cleanup" {
 
     var application: App = undefined;
     application.allocator = std.testing.allocator;
-    application.items = std.ArrayList(DisplayWindow).init(failing.allocator());
+    application.items = std.array_list.Managed(DisplayWindow).init(failing.allocator());
     defer application.items.deinit();
-    application.temp_tasks = std.ArrayList(worker.UpdateTask).init(std.testing.allocator);
+    application.temp_tasks = std.array_list.Managed(worker.UpdateTask).init(std.testing.allocator);
     defer application.temp_tasks.deinit();
     application.window_textures = std.AutoHashMap(x11.xcb.xcb_window_t, x11.WindowTexture).init(std.testing.allocator);
     defer application.window_textures.deinit();
     application.icon_texture_cache = std.StringHashMap(rl.Texture2D).init(std.testing.allocator);
     defer application.icon_texture_cache.deinit();
-    application.workspace_names = std.ArrayList([]u8).init(std.testing.allocator);
+    application.workspace_names = std.array_list.Managed([]u8).init(std.testing.allocator);
     defer application.workspace_names.deinit();
     application.update_queue = &queue;
     application.switch_mode = .all_windows;
@@ -1777,7 +1778,7 @@ test "failed window append leaves task strings owned until cleanup" {
 
 test "regrouping preserves the selected window after workspace refresh" {
     var application: App = undefined;
-    application.items = std.ArrayList(DisplayWindow).init(std.testing.allocator);
+    application.items = std.array_list.Managed(DisplayWindow).init(std.testing.allocator);
     defer application.items.deinit();
     application.switch_mode = .all_windows;
     application.current_workspace = 1;
@@ -1807,7 +1808,7 @@ test "window structure changes preserve fallback and defer hidden reacquisition"
     var connection: x11.Connection = undefined;
     var application: App = undefined;
     application.conn = &connection;
-    application.items = std.ArrayList(DisplayWindow).init(std.testing.allocator);
+    application.items = std.array_list.Managed(DisplayWindow).init(std.testing.allocator);
     defer application.items.deinit();
     application.window_textures = std.AutoHashMap(x11.xcb.xcb_window_t, x11.WindowTexture).init(std.testing.allocator);
     defer application.window_textures.deinit();

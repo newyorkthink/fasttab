@@ -1,13 +1,17 @@
 const std = @import("std");
+const runtime = @import("runtime.zig");
 const x11 = @import("x11.zig");
 const worker = @import("worker.zig");
 const app = @import("app.zig");
 const hidden_snapshot = @import("hidden_snapshot.zig");
 
 const c = @cImport({
+    // 这里只导入 libc 声明，避免 C 翻译器求值 glibc 的 fortify 内联包装。
+    @cDefine("_FORTIFY_SOURCE", "0");
     @cInclude("signal.h");
     @cInclude("sys/file.h");
     @cInclude("unistd.h");
+    @cInclude("poll.h");
 });
 
 const log = std.log.scoped(.fasttab);
@@ -61,9 +65,10 @@ fn printHelp() void {
     );
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    runtime.io = init.io;
     installFastSignalExit();
-    var args_iter = std.process.args();
+    var args_iter = init.minimal.args.iterate();
     _ = args_iter.next();
 
     while (args_iter.next()) |arg| {
@@ -91,7 +96,7 @@ pub fn main() !void {
     return runDaemon();
 }
 
-fn fastExitFromSignal(sig: c_int) callconv(.C) void {
+fn fastExitFromSignal(sig: c_int) callconv(.c) void {
     const code: c_int = if (sig == c.SIGINT) 130 else 143;
     c._exit(code);
 }
@@ -102,35 +107,34 @@ fn installFastSignalExit() void {
 }
 
 const InstanceLock = struct {
-    file: std.fs.File,
+    file: std.Io.File,
 
     fn acquire() !?InstanceLock {
         var path_buf: [64]u8 = undefined;
         const path = try std.fmt.bufPrint(&path_buf, "/tmp/fasttab-{d}.lock", .{c.getuid()});
-        const file = try std.fs.createFileAbsolute(path, .{
+        const file = try std.Io.Dir.createFileAbsolute(runtime.io, path, .{
             .read = true,
             .truncate = false,
-            .mode = 0o600,
+            .permissions = .fromMode(0o600),
         });
-        errdefer file.close();
+        errdefer file.close(runtime.io);
 
         if (c.flock(file.handle, c.LOCK_EX | c.LOCK_NB) != 0) {
-            file.close();
+            file.close(runtime.io);
             return null;
         }
 
-        try file.setEndPos(0);
-        try file.seekTo(0);
+        try file.setLength(runtime.io, 0);
         var pid_buf: [32]u8 = undefined;
         const pid_text = try std.fmt.bufPrint(&pid_buf, "{d}\n", .{std.c.getpid()});
-        try file.writeAll(pid_text);
+        try file.writePositionalAll(runtime.io, pid_text, 0);
 
         return .{ .file = file };
     }
 
     fn deinit(self: *InstanceLock) void {
         _ = c.flock(self.file.handle, c.LOCK_UN);
-        self.file.close();
+        self.file.close(runtime.io);
     }
 };
 
@@ -194,7 +198,7 @@ fn ungrabWinIsoLeftTab(conn: *x11.xcb.xcb_connection_t, root: x11.xcb.xcb_window
 }
 
 fn runDaemon() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -240,11 +244,11 @@ fn runDaemon() !void {
     log.debug("Daemon ready: {d} windows tracked", .{application.windowCount()});
 
     const xcb_fd = x11.getXcbFd(conn.conn);
-    var pollfds = [_]std.posix.pollfd{
-        .{ .fd = xcb_fd, .events = std.posix.POLL.IN, .revents = 0 },
+    var pollfds = [_]c.struct_pollfd{
+        .{ .fd = xcb_fd, .events = c.POLLIN, .revents = 0 },
     };
     while (application.isRunning()) {
-        _ = std.posix.poll(&pollfds, 16) catch {};
+        _ = c.poll(&pollfds, pollfds.len, 16);
         processXcbEvents(&application, &conn, &hidden_snapshot_tracker);
         application.drainUpdateQueue();
         hidden_snapshot_tracker.update(&application);

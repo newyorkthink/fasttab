@@ -44,7 +44,17 @@ RUN npm install -g \
 	opencode-ai \
 	@google/gemini-cli
 
-RUN apt install zig -y
+RUN apt install xz-utils -y && \
+	zig_target="$(uname -m)-linux" && \
+	zig_release="$(curl -fsSL https://ziglang.org/download/index.json | \
+		jq -er --arg target "$zig_target" '[to_entries[] | select(.key | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))] | max_by(.value.date) | .value[$target] | select(.tarball and .shasum)')" && \
+	zig_archive="$(mktemp)" && \
+	curl -fsSL "$(printf '%s' "$zig_release" | jq -r '.tarball')" -o "$zig_archive" && \
+	printf '%s  %s\n' "$(printf '%s' "$zig_release" | jq -r '.shasum')" "$zig_archive" | sha256sum -c - && \
+	mkdir -p /opt/zig && \
+	tar -xJf "$zig_archive" --strip-components=1 -C /opt/zig && \
+	ln -s /opt/zig/zig /usr/local/bin/zig && \
+	rm -f "$zig_archive"
 RUN mkdir -p /home/$USERNAME/.config /home/$USERNAME/.local/share && \
 	chown -R $USERNAME:$USERNAME /home/$USERNAME/.config /home/$USERNAME/.local
 

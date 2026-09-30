@@ -1,4 +1,5 @@
 const std = @import("std");
+const runtime = @import("runtime.zig");
 const thumbnail = @import("thumbnail.zig");
 const x11 = @import("x11.zig");
 const layout_module = @import("layout.zig");
@@ -343,11 +344,11 @@ fn tryLoadFontRecursive(
     count: usize,
     needles: []const []const u8,
 ) ?rl.Font {
-    var dir = std.fs.openDirAbsolute(dir_path, .{ .iterate = true }) catch return null;
-    defer dir.close();
+    var dir = std.Io.Dir.openDirAbsolute(runtime.io, dir_path, .{ .iterate = true }) catch return null;
+    defer dir.close(runtime.io);
 
     var it = dir.iterate();
-    while (it.next() catch null) |entry| {
+    while (it.next(runtime.io) catch null) |entry| {
         var path_buf: [std.fs.max_path_bytes:0]u8 = undefined;
         const full_path = std.fmt.bufPrintZ(&path_buf, "{s}/{s}", .{ dir_path, entry.name }) catch continue;
 
@@ -410,9 +411,7 @@ pub fn loadSystemFont(size: i32) rl.Font {
 
     // User-local fonts first, without hard-coding /home/user.
     // Prefer real OTF/TTF CJK fonts when present; reject raylib's built-in fallback.
-    if (std.process.getEnvVarOwned(std.heap.page_allocator, "HOME")) |home| {
-        defer std.heap.page_allocator.free(home);
-
+    if (runtime.getenv("HOME")) |home| {
         const local_paths = [_][]const u8{
             ".local/share/fonts/noto-cjk/NotoSansCJK-Regular.otf",
             ".local/share/fonts/noto-cjk/NotoSansSC-Regular.otf",
@@ -435,7 +434,7 @@ pub fn loadSystemFont(size: i32) rl.Font {
         if (std.fmt.bufPrint(&fonts_dir_buf, "{s}/.local/share/fonts", .{home})) |fonts_dir| {
             if (tryLoadFontRecursive(fonts_dir, 4, size, &codepoints[0], count, &cjk_preferred_needles)) |font| return font;
         } else |_| {}
-    } else |_| {}
+    }
 
     const font_paths = [_][*c]const u8{
         // Prefer CJK fonts that also have acceptable Latin glyphs.

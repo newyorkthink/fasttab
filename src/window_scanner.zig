@@ -26,15 +26,15 @@ pub const ProcessedWindow = struct {
 
 pub const ScanResult = struct {
     /// Discovered windows
-    items: std.ArrayList(ProcessedWindow),
+    items: std.array_list.Managed(ProcessedWindow),
     /// All window IDs on current desktop (including minimized, for tracking)
-    window_ids: std.ArrayList(x11.xcb.xcb_window_t),
+    window_ids: std.array_list.Managed(x11.xcb.xcb_window_t),
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) ScanResult {
         return .{
-            .items = std.ArrayList(ProcessedWindow).init(allocator),
-            .window_ids = std.ArrayList(x11.xcb.xcb_window_t).init(allocator),
+            .items = std.array_list.Managed(ProcessedWindow).init(allocator),
+            .window_ids = std.array_list.Managed(x11.xcb.xcb_window_t).init(allocator),
             .allocator = allocator,
         };
     }

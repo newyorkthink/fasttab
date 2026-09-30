@@ -1,4 +1,5 @@
 const std = @import("std");
+const runtime = @import("runtime.zig");
 const desktop_icon = @import("desktop_icon.zig");
 const ui = @import("ui.zig");
 const rl = ui.rl;
@@ -8,6 +9,7 @@ const FILTER_BY_CURRENT_DESKTOP = false;
 
 pub const xcb = @cImport({
     @cInclude("xcb/xcb.h");
+    @cInclude("xcb/xcbext.h");
     @cInclude("xcb/composite.h");
     @cInclude("xcb/xcb_image.h");
     @cInclude("xcb/xcb_keysyms.h");
@@ -30,7 +32,7 @@ var glx_error_code: u8 = 0;
 // Errors are still captured in glx_error_code; callers log a single consolidated message instead.
 var suppress_xlib_error_log: bool = false;
 
-fn xlibErrorHandler(_: ?*xlib.Display, event: ?*xlib.XErrorEvent) callconv(.C) c_int {
+fn xlibErrorHandler(_: ?*xlib.Display, event: ?*xlib.XErrorEvent) callconv(.c) c_int {
     if (event) |e| {
         glx_error_code = e.error_code;
         if (!suppress_xlib_error_log) {
@@ -173,10 +175,10 @@ pub const MouseState = struct {
 };
 
 // Cached glGenerateMipmap function pointer (looked up once)
-var cached_glGenerateMipmap: ?*const fn (c_uint) callconv(.C) void = null;
+var cached_glGenerateMipmap: ?*const fn (c_uint) callconv(.c) void = null;
 var glGenerateMipmap_looked_up: bool = false;
 
-fn getGlGenerateMipmap() ?*const fn (c_uint) callconv(.C) void {
+fn getGlGenerateMipmap() ?*const fn (c_uint) callconv(.c) void {
     if (!glGenerateMipmap_looked_up) {
         cached_glGenerateMipmap = @ptrCast(xlib.glXGetProcAddress("glGenerateMipmap"));
         glGenerateMipmap_looked_up = true;
@@ -284,17 +286,17 @@ pub const WindowTexture = struct {
     pub fn rebind(self: *WindowTexture, conn: *Connection) bool {
         const display = self.gl_display orelse return false;
         if (!self.bound) return false;
-        const start_ns = std.time.nanoTimestamp();
+        const start_ns = runtime.nanoTimestamp();
 
         clearGlxError(display);
-        const after_clear_ns = std.time.nanoTimestamp();
+        const after_clear_ns = runtime.nanoTimestamp();
 
         xlib.glBindTexture(xlib.GL_TEXTURE_2D, self.gl_texture);
         conn.glx_release.?(display, self.glx_pixmap, xlib.GLX_FRONT_LEFT_EXT);
         conn.glx_bind.?(display, self.glx_pixmap, xlib.GLX_FRONT_LEFT_EXT, null);
 
         if (checkGlxError(display)) {
-            const total_us = @divTrunc(std.time.nanoTimestamp() - start_ns, std.time.ns_per_us);
+            const total_us = @divTrunc(runtime.nanoTimestamp() - start_ns, std.time.ns_per_us);
             xlib.glBindTexture(xlib.GL_TEXTURE_2D, 0);
             log.debug("GLX rebind failed for window {x} (xlib_err={d}, us: total={d} clear_sync={d})", .{
                 self.window_id,
@@ -306,7 +308,7 @@ pub const WindowTexture = struct {
         }
 
         xlib.glBindTexture(xlib.GL_TEXTURE_2D, 0);
-        const total_us = @divTrunc(std.time.nanoTimestamp() - start_ns, std.time.ns_per_us);
+        const total_us = @divTrunc(runtime.nanoTimestamp() - start_ns, std.time.ns_per_us);
         if (total_us >= 2_000) {
             log.debug("profile rebind slow (us): window={x} total={d} clear_sync={d}", .{
                 self.window_id,
@@ -327,8 +329,8 @@ pub const Connection = struct {
     atoms: Atoms,
 
     // GLX extension function pointers (null if GLX not available)
-    glx_bind: ?*const fn (*xlib.Display, xlib.GLXPixmap, c_int, ?[*]const c_int) callconv(.C) void,
-    glx_release: ?*const fn (*xlib.Display, xlib.GLXPixmap, c_int) callconv(.C) void,
+    glx_bind: ?*const fn (*xlib.Display, xlib.GLXPixmap, c_int, ?[*]const c_int) callconv(.c) void,
+    glx_release: ?*const fn (*xlib.Display, xlib.GLXPixmap, c_int) callconv(.c) void,
     screen_num: c_int,
 
     // Damage extension
@@ -726,7 +728,6 @@ fn getCurrentDesktop(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t, atoms:
     return data.*;
 }
 
-
 fn getNumberOfDesktops(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t, atoms: Atoms) ?u32 {
     const cookie = xcb.xcb_get_property(conn, 0, root, atoms.net_number_of_desktops, xcb.XCB_ATOM_CARDINAL, 0, 1);
     const reply = xcb.xcb_get_property_reply(conn, cookie, null);
@@ -779,7 +780,7 @@ pub fn getWorkspaceInfo(
     const raw: [*]const u8 = @ptrCast(xcb.xcb_get_property_value(reply));
     const data = raw[0..@intCast(len)];
 
-    var list = std.ArrayList([]u8).init(allocator);
+    var list = std.array_list.Managed([]u8).init(allocator);
     var start: usize = 0;
     var i: usize = 0;
     while (i <= data.len) : (i += 1) {
@@ -1136,7 +1137,7 @@ pub fn ungrabWinTab(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) void {
 
 /// Actively grab the keyboard so ALL key events go to us during switching.
 pub fn grabKeyboard(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) bool {
-    const start_ns = std.time.nanoTimestamp();
+    const start_ns = runtime.nanoTimestamp();
     const cookie = xcb.xcb_grab_keyboard(
         conn,
         1, // owner_events
@@ -1146,7 +1147,7 @@ pub fn grabKeyboard(conn: *xcb.xcb_connection_t, root: xcb.xcb_window_t) bool {
         xcb.XCB_GRAB_MODE_ASYNC,
     );
     const reply = xcb.xcb_grab_keyboard_reply(conn, cookie, null);
-    const elapsed_us = @divTrunc(std.time.nanoTimestamp() - start_ns, std.time.ns_per_us);
+    const elapsed_us = @divTrunc(runtime.nanoTimestamp() - start_ns, std.time.ns_per_us);
     if (elapsed_us >= 2_000) {
         log.debug("profile grabKeyboard slow: {d}us", .{elapsed_us});
     } else {

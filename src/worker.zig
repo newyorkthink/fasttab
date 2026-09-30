@@ -1,4 +1,5 @@
 const std = @import("std");
+const runtime = @import("runtime.zig");
 const x11 = @import("x11.zig");
 const window_icon = @import("window_icon.zig");
 const thumbnail = @import("thumbnail.zig");
@@ -56,23 +57,23 @@ pub const UpdateTask = union(enum) {
 };
 
 pub const TaskQueue = struct {
-    mutex: std.Thread.Mutex = .{},
-    tasks: std.ArrayList(UpdateTask),
-    dropped_windows: std.ArrayList(x11.xcb.xcb_window_t),
+    mutex: std.Io.Mutex = .init,
+    tasks: std.array_list.Managed(UpdateTask),
+    dropped_windows: std.array_list.Managed(x11.xcb.xcb_window_t),
     should_stop: bool = false,
     window_visible: bool = true,
     first_scan_done: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) TaskQueue {
         return .{
-            .tasks = std.ArrayList(UpdateTask).init(allocator),
-            .dropped_windows = std.ArrayList(x11.xcb.xcb_window_t).init(allocator),
+            .tasks = std.array_list.Managed(UpdateTask).init(allocator),
+            .dropped_windows = std.array_list.Managed(x11.xcb.xcb_window_t).init(allocator),
         };
     }
 
     pub fn push(self: *TaskQueue, task: UpdateTask) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(runtime.io);
+        defer self.mutex.unlock(runtime.io);
         self.tasks.append(task) catch {
             // On OOM, discard the task and free its data
             var t = task;
@@ -80,9 +81,9 @@ pub const TaskQueue = struct {
         };
     }
 
-    pub fn drainAll(self: *TaskQueue, out: *std.ArrayList(UpdateTask)) usize {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn drainAll(self: *TaskQueue, out: *std.array_list.Managed(UpdateTask)) usize {
+        self.mutex.lockUncancelable(runtime.io);
+        defer self.mutex.unlock(runtime.io);
         const count = self.tasks.items.len;
         out.appendSlice(self.tasks.items) catch {
             return 0;
@@ -92,50 +93,50 @@ pub const TaskQueue = struct {
     }
 
     pub fn requestStop(self: *TaskQueue) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(runtime.io);
+        defer self.mutex.unlock(runtime.io);
         self.should_stop = true;
     }
 
     pub fn shouldStop(self: *TaskQueue) bool {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(runtime.io);
+        defer self.mutex.unlock(runtime.io);
         return self.should_stop;
     }
 
     pub fn setWindowVisible(self: *TaskQueue, visible: bool) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(runtime.io);
+        defer self.mutex.unlock(runtime.io);
         self.window_visible = visible;
     }
 
     pub fn isWindowVisible(self: *TaskQueue) bool {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(runtime.io);
+        defer self.mutex.unlock(runtime.io);
         return self.window_visible;
     }
 
     pub fn setFirstScanDone(self: *TaskQueue) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(runtime.io);
+        defer self.mutex.unlock(runtime.io);
         self.first_scan_done = true;
     }
 
     pub fn waitForFirstScan(self: *TaskQueue, timeout_ms: u64) bool {
-        const start = std.time.milliTimestamp();
+        const start = runtime.milliTimestamp();
         while (true) {
-            self.mutex.lock();
+            self.mutex.lockUncancelable(runtime.io);
             const done = self.first_scan_done;
             const stopped = self.should_stop;
-            self.mutex.unlock();
+            self.mutex.unlock(runtime.io);
 
             if (done) return true;
             if (stopped) return false;
 
-            const elapsed = std.time.milliTimestamp() - start;
+            const elapsed = runtime.milliTimestamp() - start;
             if (elapsed >= @as(i64, @intCast(timeout_ms))) return false;
 
-            std.time.sleep(10 * std.time.ns_per_ms);
+            runtime.sleep(10 * std.time.ns_per_ms);
         }
     }
 
@@ -143,22 +144,22 @@ pub const TaskQueue = struct {
     /// (texture creation failed, damage/reacquire failed, etc.) so the
     /// worker can forget about it and re-discover it as new.
     pub fn reportDropped(self: *TaskQueue, window_id: x11.xcb.xcb_window_t) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(runtime.io);
+        defer self.mutex.unlock(runtime.io);
         self.dropped_windows.append(window_id) catch {};
     }
 
     /// Called by the worker thread to drain the set of dropped window IDs.
-    pub fn drainDropped(self: *TaskQueue, out: *std.ArrayList(x11.xcb.xcb_window_t)) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn drainDropped(self: *TaskQueue, out: *std.array_list.Managed(x11.xcb.xcb_window_t)) void {
+        self.mutex.lockUncancelable(runtime.io);
+        defer self.mutex.unlock(runtime.io);
         out.appendSlice(self.dropped_windows.items) catch {};
         self.dropped_windows.clearRetainingCapacity();
     }
 
     pub fn deinit(self: *TaskQueue) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(runtime.io);
+        defer self.mutex.unlock(runtime.io);
         for (self.tasks.items) |*task| {
             task.deinit();
         }
@@ -278,10 +279,10 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
         tracked_windows.deinit();
     }
 
-    var known_list = std.ArrayList(x11.xcb.xcb_window_t).init(allocator);
+    var known_list = std.array_list.Managed(x11.xcb.xcb_window_t).init(allocator);
     defer known_list.deinit();
 
-    var dropped_list = std.ArrayList(x11.xcb.xcb_window_t).init(allocator);
+    var dropped_list = std.array_list.Managed(x11.xcb.xcb_window_t).init(allocator);
     defer dropped_list.deinit();
 
     var is_first_scan = true;
@@ -309,7 +310,7 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
     while (!queue.shouldStop()) {
         // For first scan, don't wait - produce results immediately
         if (!is_first_scan) {
-            std.time.sleep(DELAY_SECONDS * std.time.ns_per_s);
+            runtime.sleep(DELAY_SECONDS * std.time.ns_per_s);
         }
 
         if (queue.shouldStop()) break;
@@ -353,7 +354,7 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
         };
         defer scan_result.deinit();
 
-        var tracked_ids = std.ArrayList(x11.xcb.xcb_window_t).init(allocator);
+        var tracked_ids = std.array_list.Managed(x11.xcb.xcb_window_t).init(allocator);
         // Collect keys first to avoid modification during iteration issues
         var tracked_iter = tracked_windows.keyIterator();
         while (tracked_iter.next()) |key| {
@@ -402,7 +403,7 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
                     } });
                 }
 
-                const now_ms = std.time.milliTimestamp();
+                const now_ms = runtime.milliTimestamp();
                 if (!pushed_icons.contains(existing.icon_id) and now_ms >= existing.next_icon_retry_ms) {
                     if (queueIconIfAvailable(allocator, queue, &conn, item.window_id, existing.icon_id, &icon_cache, &pushed_icons)) {
                         existing.next_icon_retry_ms = std.math.maxInt(i64);
@@ -430,7 +431,7 @@ pub fn backgroundWorker(queue: *TaskQueue, allocator: std.mem.Allocator) void {
                     .title = title_owned, // Takes ownership
                     .icon_id = icon_id_owned, // Takes ownership
                     .title_version = 1,
-                    .next_icon_retry_ms = if (icon_ready) std.math.maxInt(i64) else std.time.milliTimestamp() + ICON_RETRY_INTERVAL_MS,
+                    .next_icon_retry_ms = if (icon_ready) std.math.maxInt(i64) else runtime.milliTimestamp() + ICON_RETRY_INTERVAL_MS,
                     .allocator = allocator,
                 };
                 tracked_windows.put(item.window_id, tracked) catch {

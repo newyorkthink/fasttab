@@ -16,7 +16,7 @@ FastTab 是一款面向 X11 的高性能窗口切换器，使用 Zig、Raylib �
 - 在所有应用共用的着色器中修复，不添加 Firefox 专用规则。
 - 当工作区栏宽于窗口网格时，按工作区栏的实际测量宽度扩展切换器。
 - 当前只有一个窗口时保持卡片居中，并完整显示最后一个工作区标签。
-- 恢复浏览器、视频、Remmina 等所有 X11 客户端共用的 GLX 实时预览，不再按应用名称打补丁。
+- 所有 X11 客户端共用 GLX/GPU 预览链路；源窗口持续绘制时提供实时画面。
 - FastTab 隐藏时释放 XComposite/GLX 绑定，再次显示时重新获取最新的窗口 backing pixmap。
 - 窗口尺寸变化或客户端重新映射时，释放仍可能绑定成功但已经过期的旧 pixmap，重新获取当前画面。
 - 即使从未打开切换器，当前工作区中实际访问过的窗口、以及同工作区仍可见的未聚焦窗口，也会在后台留下最后一帧预览。
@@ -104,13 +104,18 @@ fasttab -h, --help       显示帮助
 
 ## 从源码构建
 
-需要 Zig 0.14.0 或更高版本、C 编译工具链、`make`、`curl`、`tar`，以及 CI 工作流中列出的 X11/OpenGL 开发库。
+使用 [Zig 官方最新稳定版](https://ziglang.org/download/)，以及 C 编译工具链、`make`、`curl`、`tar` 和 CI 工作流中列出的 X11/OpenGL 开发库。CI 使用 `version: latest`，开发容器按官方下载索引选择最新稳定版并校验 SHA256，不固定 Zig 版本。
 
 ```bash
+# 在任意 Linux 工作目录克隆仓库
 git clone https://github.com/newyorkthink/fasttab.git
+# 进入仓库根目录
 cd fasttab
+# 在仓库根目录下载并构建依赖
 ./setup.sh
+# 在仓库根目录运行测试
 zig build test
+# 在仓库根目录构建 ReleaseSafe 程序
 zig build -Doptimize=ReleaseSafe -Dcpu=baseline
 ```
 
@@ -130,6 +135,8 @@ FastTab 使用 GNU 通用公共许可证第 3 版（`GPL-3.0-only`）发布，�
 
 FastTab 以守护进程方式运行，持续跟踪 X11 窗口并维护 GLX 缩略图；切换器界面由 Raylib/OpenGL 渲染。由于不需要在按下快捷键后临时生成截图，窗口切换延迟较低。
 
-实时视频预览需要源窗口仍为 `viewable` 且持续绘制。i3/X11 中，同一工作区窗口被其他窗口覆盖并不等于未映射；源窗口继续绘制时可以动态预览。隐藏工作区或最小化导致窗口不再 `viewable` 时，显示最后有效缓存。
+实时视频预览需要源窗口仍为 `viewable` 且持续绘制。同一工作区并不保证应用继续绘制：i3 的标签／堆叠布局会给后台标签设置 `_NET_WM_STATE_HIDDEN`，即使客户端仍映射，浏览器也可能暂停绘制。因此不能仅凭 `viewable` 判断预览一定是动态视频；源应用停止提交新帧时，FastTab 只能保留最后画面。
+
+后台标签的视频停帧仍未解决。隔离 i3／Firefox 验证中，并排布局持续产生新帧，后台标签则停止更新；同场景运行 skippy-xd 或启用 picom 都未解除这个限制。隐藏工作区或最小化导致窗口不再 `viewable` 时，继续显示最后有效缓存。
 
 FastTab 监听客户端的尺寸变化与重新映射，及时释放已经过期的命名 pixmap。已有缓存仍保留到真实 XDamage 后成功 rebind，避免把重新获取时的暂时黑帧替换到预览中。

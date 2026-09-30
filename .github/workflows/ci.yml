@@ -92,7 +92,7 @@ jobs:
       - name: 配置 Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.14.0
+          version: latest
 
       - name: 核对桌面文件元数据
         run: desktop-file-validate packaging/fasttab.desktop
@@ -143,7 +143,7 @@ jobs:
       - name: 配置 Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.14.0
+          version: latest
 
       - name: 安装 quick-sharun
         run: |

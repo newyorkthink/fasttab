@@ -11,13 +11,13 @@ fn makeWindow(id: u32, workspace: ?u32) DisplayWindow {
     return window;
 }
 
-fn filtered(items: []const DisplayWindow, workspace: u32, out: *std.ArrayList(DisplayWindow)) void {
+fn filtered(items: []const DisplayWindow, workspace: u32, out: *std.array_list.Managed(DisplayWindow)) void {
     app.filterItemsByWorkspace(items, workspace, out);
 }
 
 test "current workspace filter includes matches only" {
     const items = [_]DisplayWindow{ makeWindow(1, 1), makeWindow(2, 2), makeWindow(3, 1) };
-    var out = std.ArrayList(DisplayWindow).init(testing.allocator);
+    var out = std.array_list.Managed(DisplayWindow).init(testing.allocator);
     defer out.deinit();
     filtered(&items, 1, &out);
     try testing.expectEqual(@as(usize, 2), out.items.len);
@@ -27,7 +27,7 @@ test "current workspace filter includes matches only" {
 
 test "current workspace filter includes sticky and unknown windows" {
     const items = [_]DisplayWindow{ makeWindow(1, 4), makeWindow(2, 0xFFFFFFFF), makeWindow(3, null), makeWindow(4, 7) };
-    var out = std.ArrayList(DisplayWindow).init(testing.allocator);
+    var out = std.array_list.Managed(DisplayWindow).init(testing.allocator);
     defer out.deinit();
     filtered(&items, 4, &out);
     try testing.expectEqual(@as(usize, 3), out.items.len);
@@ -38,7 +38,7 @@ test "current workspace filter includes sticky and unknown windows" {
 
 test "current workspace filter preserves ordering and shallow copies" {
     const items = [_]DisplayWindow{ makeWindow(10, 2), makeWindow(20, 1), makeWindow(30, 2) };
-    var out = std.ArrayList(DisplayWindow).init(testing.allocator);
+    var out = std.array_list.Managed(DisplayWindow).init(testing.allocator);
     defer out.deinit();
     filtered(&items, 2, &out);
     try testing.expectEqual(@as(usize, 2), out.items.len);

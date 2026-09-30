@@ -1,4 +1,5 @@
 const std = @import("std");
+const runtime = @import("runtime.zig");
 const fs = std.fs;
 const mem = std.mem;
 
@@ -69,32 +70,35 @@ fn getProcessAppImageIcon(allocator: mem.Allocator, pid: std.posix.pid_t) !?Icon
     if (pid <= 0) return null;
     const path = try std.fmt.allocPrint(allocator, "/proc/{d}/environ", .{pid});
     defer allocator.free(path);
-    var file = fs.openFileAbsolute(path, .{}) catch return null;
-    defer file.close();
-    const environment = file.readToEndAlloc(allocator, MAX_PROC_ENV_BYTES) catch return null;
+    var file = std.Io.Dir.openFileAbsolute(runtime.io, path, .{}) catch return null;
+    defer file.close(runtime.io);
+    var buffer: [4096]u8 = undefined;
+    var reader = file.readerStreaming(runtime.io, &buffer);
+    const environment = reader.interface.allocRemaining(allocator, .limited(MAX_PROC_ENV_BYTES)) catch return null;
     defer allocator.free(environment);
     const appdir = appDirFromEnvironment(environment) orelse return null;
     return loadAppDirIcon(allocator, appdir);
 }
 
 fn loadAppDirIcon(allocator: mem.Allocator, appdir: []const u8) !?IconResult {
-    var dir = fs.openDirAbsolute(appdir, .{}) catch return null;
-    defer dir.close();
+    var dir = std.Io.Dir.openDirAbsolute(runtime.io, appdir, .{}) catch return null;
+    defer dir.close(runtime.io);
     const diricon = try fs.path.join(allocator, &.{ appdir, ".DirIcon" });
     defer allocator.free(diricon);
     if (loadPng(diricon)) |icon| return icon else |_| {}
 
     // Some bundles use an absolute /usr/... symlink relative to their AppDir.
     var link_buf: [fs.max_path_bytes]u8 = undefined;
-    if (dir.readLink(".DirIcon", &link_buf)) |target| {
+    if (dir.readLink(runtime.io, ".DirIcon", &link_buf)) |target_len| {
+        const target = link_buf[0..target_len];
         if (try loadAppDirIconValue(allocator, appdir, target)) |icon| return icon;
     } else |_| {}
 
     for ([_][]const u8{ ".", "usr/share/applications" }) |subdir| {
-        var desktop_dir = dir.openDir(subdir, .{ .iterate = true }) catch continue;
-        defer desktop_dir.close();
+        var desktop_dir = dir.openDir(runtime.io, subdir, .{ .iterate = true }) catch continue;
+        defer desktop_dir.close(runtime.io);
         var iter = desktop_dir.iterate();
-        while (iter.next() catch null) |entry| {
+        while (iter.next(runtime.io) catch null) |entry| {
             if (!mem.endsWith(u8, entry.name, ".desktop")) continue;
             const icon_id = try scanDesktopForIcon(allocator, desktop_dir, entry.name, null) orelse continue;
             defer allocator.free(icon_id);
@@ -105,16 +109,16 @@ fn loadAppDirIcon(allocator: mem.Allocator, appdir: []const u8) !?IconResult {
 }
 
 /// Read only the main Desktop Entry group, never an action's Icon/WMClass.
-fn scanDesktopForIcon(allocator: mem.Allocator, dir: fs.Dir, filename: []const u8, wm_class: ?[]const u8) !?[]const u8 {
-    var file = dir.openFile(filename, .{}) catch return null;
-    defer file.close();
+fn scanDesktopForIcon(allocator: mem.Allocator, dir: std.Io.Dir, filename: []const u8, wm_class: ?[]const u8) !?[]const u8 {
+    var file = dir.openFile(runtime.io, filename, .{}) catch return null;
+    defer file.close(runtime.io);
     var icon_val: ?[]const u8 = null;
     errdefer if (icon_val) |v| allocator.free(v);
     var matches = wm_class == null;
     var in_entry = false;
-    var reader = std.io.bufferedReader(file.reader());
     var buf: [4096]u8 = undefined;
-    while (reader.reader().readUntilDelimiterOrEof(&buf, '\n') catch null) |line| {
+    var reader = file.reader(runtime.io, &buf);
+    while (reader.interface.takeDelimiter('\n') catch null) |line| {
         const t = mem.trim(u8, line, " \r");
         if (mem.startsWith(u8, t, "[")) {
             in_entry = mem.eql(u8, t, "[Desktop Entry]");
@@ -133,10 +137,10 @@ fn scanDesktopForIcon(allocator: mem.Allocator, dir: fs.Dir, filename: []const u
 }
 
 fn appDirPath(allocator: mem.Allocator, appdir: []const u8, path: []const u8) ![]const u8 {
-    const root = mem.trimRight(u8, appdir, "/");
+    const root = mem.trimEnd(u8, appdir, "/");
     if (fs.path.isAbsolute(path) and mem.startsWith(u8, path, root) and
         (path.len == root.len or path[root.len] == '/')) return allocator.dupe(u8, path);
-    return fs.path.join(allocator, &.{ appdir, mem.trimLeft(u8, path, "/") });
+    return fs.path.join(allocator, &.{ appdir, mem.trimStart(u8, path, "/") });
 }
 
 fn loadAppDirIconValue(allocator: mem.Allocator, appdir: []const u8, icon_id: []const u8) !?IconResult {
@@ -181,8 +185,8 @@ fn loadAppDirIconValue(allocator: mem.Allocator, appdir: []const u8, icon_id: []
 
 /// Returns an owned copy of the XDG data home directory path.
 fn xdgDataHome(allocator: mem.Allocator) ![]const u8 {
-    if (std.posix.getenv("XDG_DATA_HOME")) |v| return allocator.dupe(u8, v);
-    const home = std.posix.getenv("HOME") orelse "";
+    if (runtime.getenv("XDG_DATA_HOME")) |v| return allocator.dupe(u8, v);
+    const home = runtime.getenv("HOME") orelse "";
     return fs.path.join(allocator, &.{ home, ".local/share" });
 }
 
@@ -237,7 +241,7 @@ fn findIconNameFromDesktop(allocator: mem.Allocator, app_name: []const u8) !?[]c
 
     // Build search dirs per XDG Base Directory spec:
     // $XDG_DATA_HOME/applications, then each $XDG_DATA_DIRS entry/applications
-    var search_dirs = std.ArrayList([]const u8).init(allocator);
+    var search_dirs = std.array_list.Managed([]const u8).init(allocator);
     defer {
         for (search_dirs.items) |dir| allocator.free(dir);
         search_dirs.deinit();
@@ -245,7 +249,7 @@ fn findIconNameFromDesktop(allocator: mem.Allocator, app_name: []const u8) !?[]c
 
     try search_dirs.append(try fs.path.join(allocator, &.{ data_home, "applications" }));
 
-    const xdg_dirs = std.posix.getenv("XDG_DATA_DIRS") orelse "/usr/local/share:/usr/share";
+    const xdg_dirs = runtime.getenv("XDG_DATA_DIRS") orelse "/usr/local/share:/usr/share";
     var it = mem.splitScalar(u8, xdg_dirs, ':');
     while (it.next()) |dir| {
         if (dir.len == 0) continue;
@@ -256,10 +260,10 @@ fn findIconNameFromDesktop(allocator: mem.Allocator, app_name: []const u8) !?[]c
     // does not have to match the package's lowercase desktop filename.
     for (search_dirs.items) |base| {
         if (!fs.path.isAbsolute(base)) continue;
-        var dir = fs.openDirAbsolute(base, .{ .iterate = true }) catch continue;
-        defer dir.close();
+        var dir = std.Io.Dir.openDirAbsolute(runtime.io, base, .{ .iterate = true }) catch continue;
+        defer dir.close(runtime.io);
         var dir_iter = dir.iterate();
-        while (dir_iter.next() catch null) |entry| {
+        while (dir_iter.next(runtime.io) catch null) |entry| {
             if (!desktopFileMatchesAppName(entry.name, app_name)) continue;
             if (try scanDesktopForIcon(allocator, dir, entry.name, null)) |icon| return icon;
         }
@@ -269,10 +273,10 @@ fn findIconNameFromDesktop(allocator: mem.Allocator, app_name: []const u8) !?[]c
     // Handles apps like JetBrains Toolbox that append UUIDs to desktop filenames.
     for (search_dirs.items) |base| {
         if (!fs.path.isAbsolute(base)) continue;
-        var dir = fs.openDirAbsolute(base, .{ .iterate = true }) catch continue;
-        defer dir.close();
+        var dir = std.Io.Dir.openDirAbsolute(runtime.io, base, .{ .iterate = true }) catch continue;
+        defer dir.close(runtime.io);
         var dir_iter = dir.iterate();
-        while (dir_iter.next() catch null) |entry| {
+        while (dir_iter.next(runtime.io) catch null) |entry| {
             if (!mem.endsWith(u8, entry.name, ".desktop")) continue;
             if (try scanDesktopForIcon(allocator, dir, entry.name, app_name)) |icon| {
                 return icon;
@@ -285,10 +289,10 @@ fn findIconNameFromDesktop(allocator: mem.Allocator, app_name: []const u8) !?[]c
     // and keep this after exact ID/StartupWMClass so existing mappings win.
     for (search_dirs.items) |base| {
         if (!fs.path.isAbsolute(base)) continue;
-        var dir = fs.openDirAbsolute(base, .{ .iterate = true }) catch continue;
-        defer dir.close();
+        var dir = std.Io.Dir.openDirAbsolute(runtime.io, base, .{ .iterate = true }) catch continue;
+        defer dir.close(runtime.io);
         var dir_iter = dir.iterate();
-        while (dir_iter.next() catch null) |entry| {
+        while (dir_iter.next(runtime.io) catch null) |entry| {
             if (!desktopFileQualifiedMatchesAppName(entry.name, app_name)) continue;
             if (try scanDesktopForIcon(allocator, dir, entry.name, null)) |icon| return icon;
         }
@@ -311,7 +315,7 @@ fn resolveIconPath(allocator: mem.Allocator, icon_id: []const u8, target_size: u
 
     // Build hicolor roots per XDG spec:
     // $XDG_DATA_HOME/icons/hicolor, then each $XDG_DATA_DIRS entry/icons/hicolor
-    var hicolor_roots = std.ArrayList([]const u8).init(allocator);
+    var hicolor_roots = std.array_list.Managed([]const u8).init(allocator);
     defer {
         for (hicolor_roots.items) |dir| allocator.free(dir);
         hicolor_roots.deinit();
@@ -319,7 +323,7 @@ fn resolveIconPath(allocator: mem.Allocator, icon_id: []const u8, target_size: u
 
     try hicolor_roots.append(try fs.path.join(allocator, &.{ data_home, "icons/hicolor" }));
 
-    const xdg_dirs = std.posix.getenv("XDG_DATA_DIRS") orelse "/usr/local/share:/usr/share";
+    const xdg_dirs = runtime.getenv("XDG_DATA_DIRS") orelse "/usr/local/share:/usr/share";
     var it = mem.splitScalar(u8, xdg_dirs, ':');
     while (it.next()) |dir| {
         if (dir.len == 0) continue;
@@ -344,7 +348,7 @@ fn resolveIconPath(allocator: mem.Allocator, icon_id: []const u8, target_size: u
     for (ICON_SIZES[start_idx..]) |size_dir| {
         for (hicolor_roots.items) |root| {
             const path = try fs.path.join(allocator, &.{ root, size_dir, "apps", icon_filename });
-            fs.accessAbsolute(path, .{}) catch {
+            std.Io.Dir.accessAbsolute(runtime.io, path, .{}) catch {
                 allocator.free(path);
                 continue;
             };
@@ -359,7 +363,7 @@ fn resolveIconPath(allocator: mem.Allocator, icon_id: []const u8, target_size: u
         const size_dir = ICON_SIZES[lower_idx];
         for (hicolor_roots.items) |root| {
             const path = try fs.path.join(allocator, &.{ root, size_dir, "apps", icon_filename });
-            fs.accessAbsolute(path, .{}) catch {
+            std.Io.Dir.accessAbsolute(runtime.io, path, .{}) catch {
                 allocator.free(path);
                 continue;
             };
@@ -372,7 +376,7 @@ fn resolveIconPath(allocator: mem.Allocator, icon_id: []const u8, target_size: u
     while (it2.next()) |dir| {
         if (dir.len == 0) continue;
         const path = try fs.path.join(allocator, &.{ dir, "pixmaps", icon_filename });
-        fs.accessAbsolute(path, .{}) catch {
+        std.Io.Dir.accessAbsolute(runtime.io, path, .{}) catch {
             allocator.free(path);
             continue;
         };
@@ -469,7 +473,7 @@ test "AppDir absolute paths require a directory boundary" {
 test "desktop lookup uses application class and ignores desktop actions" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(.{ .sub_path = "terminal.desktop", .data = "[Desktop Action Other]\nIcon=wrong\nStartupWMClass=wrong\n" ++
+    try tmp.dir.writeFile(runtime.io, .{ .sub_path = "terminal.desktop", .data = "[Desktop Action Other]\nIcon=wrong\nStartupWMClass=wrong\n" ++
         "[Desktop Entry]\nIcon=terminal\nStartupWMClass=TerminalApp\n" ++
         "[Desktop Action New]\nIcon=also-wrong\n" });
     const allocator = std.testing.allocator;
@@ -485,8 +489,8 @@ const test_png = "\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\
 test "AppDir icon works without desktop metadata or matching WM_CLASS" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(.{ .sub_path = ".DirIcon", .data = test_png });
-    const path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    try tmp.dir.writeFile(runtime.io, .{ .sub_path = ".DirIcon", .data = test_png });
+    const path = try tmp.dir.realPathFileAlloc(runtime.io, ".", std.testing.allocator);
     defer std.testing.allocator.free(path);
     var icon = (try loadAppDirIcon(std.testing.allocator, path)).?;
     defer icon.deinit();
@@ -497,10 +501,10 @@ test "AppDir icon works without desktop metadata or matching WM_CLASS" {
 test "AppDir resolves root-relative DirIcon symlinks" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.makePath("usr/share/pixmaps");
-    try tmp.dir.writeFile(.{ .sub_path = "usr/share/pixmaps/fasttab-test-icon.png", .data = test_png });
-    try tmp.dir.symLink("/usr/share/pixmaps/fasttab-test-icon.png", ".DirIcon", .{});
-    const path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    try tmp.dir.createDirPath(runtime.io, "usr/share/pixmaps");
+    try tmp.dir.writeFile(runtime.io, .{ .sub_path = "usr/share/pixmaps/fasttab-test-icon.png", .data = test_png });
+    try tmp.dir.symLink(runtime.io, "/usr/share/pixmaps/fasttab-test-icon.png", ".DirIcon", .{});
+    const path = try tmp.dir.realPathFileAlloc(runtime.io, ".", std.testing.allocator);
     defer std.testing.allocator.free(path);
     var icon = (try loadAppDirIcon(std.testing.allocator, path)).?;
     defer icon.deinit();
@@ -510,11 +514,11 @@ test "AppDir resolves root-relative DirIcon symlinks" {
 test "AppDir resolves nested desktop and themed PNG with extension" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.makePath("usr/share/applications");
-    try tmp.dir.makePath("usr/share/icons/hicolor/32x32/apps");
-    try tmp.dir.writeFile(.{ .sub_path = "usr/share/applications/unrelated.desktop", .data = "[Desktop Entry]\nIcon=embedded.png\n" });
-    try tmp.dir.writeFile(.{ .sub_path = "usr/share/icons/hicolor/32x32/apps/embedded.png", .data = test_png });
-    const path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    try tmp.dir.createDirPath(runtime.io, "usr/share/applications");
+    try tmp.dir.createDirPath(runtime.io, "usr/share/icons/hicolor/32x32/apps");
+    try tmp.dir.writeFile(runtime.io, .{ .sub_path = "usr/share/applications/unrelated.desktop", .data = "[Desktop Entry]\nIcon=embedded.png\n" });
+    try tmp.dir.writeFile(runtime.io, .{ .sub_path = "usr/share/icons/hicolor/32x32/apps/embedded.png", .data = test_png });
+    const path = try tmp.dir.realPathFileAlloc(runtime.io, ".", std.testing.allocator);
     defer std.testing.allocator.free(path);
     var icon = (try loadAppDirIcon(std.testing.allocator, path)).?;
     defer icon.deinit();
@@ -525,18 +529,18 @@ test "AppImage fallback reads only the supplied process APPDIR" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(.{ .sub_path = ".DirIcon", .data = test_png });
-    const path = try tmp.dir.realpathAlloc(allocator, ".");
+    try tmp.dir.writeFile(runtime.io, .{ .sub_path = ".DirIcon", .data = test_png });
+    const path = try tmp.dir.realPathFileAlloc(runtime.io, ".", allocator);
     defer allocator.free(path);
-    var environment = std.process.EnvMap.init(allocator);
+    var environment = std.process.Environ.Map.init(allocator);
     defer environment.deinit();
     try environment.put("APPDIR", path);
-    var child = std.process.Child.init(&.{ "/bin/sleep", "30" }, allocator);
-    child.env_map = &environment;
-    try child.spawn();
-    defer _ = child.kill() catch {};
-    try child.waitForSpawn();
-    var icon = (try getProcessAppImageIcon(allocator, child.id)).?;
+    var child = try std.process.spawn(runtime.io, .{
+        .argv = &.{ "/bin/sleep", "30" },
+        .environ_map = &environment,
+    });
+    defer child.kill(runtime.io);
+    var icon = (try getProcessAppImageIcon(allocator, child.id.?)).?;
     defer icon.deinit();
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, icon.pixels);
     try std.testing.expect((try getProcessAppImageIcon(allocator, 0)) == null);
@@ -560,8 +564,8 @@ fn loadRootedAppIcon(
     app_names: []const []const u8,
     target_size: u32,
 ) !?IconResult {
-    var root = fs.openDirAbsolute(root_path, .{}) catch return null;
-    defer root.close();
+    var root = std.Io.Dir.openDirAbsolute(runtime.io, root_path, .{}) catch return null;
+    defer root.close(runtime.io);
 
     for (app_names) |app_name| {
         if (app_name.len == 0 or mem.eql(u8, app_name, "(unknown)")) continue;
@@ -587,36 +591,36 @@ fn loadRootedAppIcon(
 
 fn findRootedIconNameFromDesktop(
     allocator: mem.Allocator,
-    root: fs.Dir,
+    root: std.Io.Dir,
     app_name: []const u8,
 ) !?[]const u8 {
     const search_dirs = [_][]const u8{ "usr/local/share/applications", "usr/share/applications" };
 
     for (search_dirs) |base| {
-        var dir = root.openDir(base, .{ .iterate = true }) catch continue;
-        defer dir.close();
+        var dir = root.openDir(runtime.io, base, .{ .iterate = true }) catch continue;
+        defer dir.close(runtime.io);
         var dir_iter = dir.iterate();
-        while (dir_iter.next() catch null) |entry| {
+        while (dir_iter.next(runtime.io) catch null) |entry| {
             if (!desktopFileMatchesAppName(entry.name, app_name)) continue;
             if (try scanDesktopForIcon(allocator, dir, entry.name, null)) |icon| return icon;
         }
     }
 
     for (search_dirs) |base| {
-        var dir = root.openDir(base, .{ .iterate = true }) catch continue;
-        defer dir.close();
+        var dir = root.openDir(runtime.io, base, .{ .iterate = true }) catch continue;
+        defer dir.close(runtime.io);
         var dir_iter = dir.iterate();
-        while (dir_iter.next() catch null) |entry| {
+        while (dir_iter.next(runtime.io) catch null) |entry| {
             if (!mem.endsWith(u8, entry.name, ".desktop")) continue;
             if (try scanDesktopForIcon(allocator, dir, entry.name, app_name)) |icon| return icon;
         }
     }
 
     for (search_dirs) |base| {
-        var dir = root.openDir(base, .{ .iterate = true }) catch continue;
-        defer dir.close();
+        var dir = root.openDir(runtime.io, base, .{ .iterate = true }) catch continue;
+        defer dir.close(runtime.io);
         var dir_iter = dir.iterate();
-        while (dir_iter.next() catch null) |entry| {
+        while (dir_iter.next(runtime.io) catch null) |entry| {
             if (!desktopFileQualifiedMatchesAppName(entry.name, app_name)) continue;
             if (try scanDesktopForIcon(allocator, dir, entry.name, null)) |icon| return icon;
         }
@@ -627,7 +631,7 @@ fn findRootedIconNameFromDesktop(
 
 fn resolveRootedIcon(
     allocator: mem.Allocator,
-    root: fs.Dir,
+    root: std.Io.Dir,
     root_path: []const u8,
     icon_id: []const u8,
     target_size: u32,
@@ -677,7 +681,7 @@ fn resolveRootedIcon(
 
 fn loadRootedPng(
     allocator: mem.Allocator,
-    root: fs.Dir,
+    root: std.Io.Dir,
     root_path: []const u8,
     logical_path: []const u8,
 ) !?IconResult {
@@ -686,7 +690,7 @@ fn loadRootedPng(
 
 fn loadRootedPngDepth(
     allocator: mem.Allocator,
-    root: fs.Dir,
+    root: std.Io.Dir,
     root_path: []const u8,
     logical_path: []const u8,
     depth: u8,
@@ -694,7 +698,7 @@ fn loadRootedPngDepth(
     if (depth >= 8) return null;
     // Resolve each component before continuing, including directory symlinks.
     // Apply .. after symlink expansion and clamp it at the process root.
-    var resolved = std.ArrayList(u8).init(allocator);
+    var resolved = std.array_list.Managed(u8).init(allocator);
     defer resolved.deinit();
     var components = mem.splitScalar(u8, logical_path, '/');
     while (components.next()) |component| {
@@ -708,7 +712,8 @@ fn loadRootedPngDepth(
         if (parent_len > 0) try resolved.append('/');
         try resolved.appendSlice(component);
         var link_buf: [fs.max_path_bytes]u8 = undefined;
-        if (root.readLink(resolved.items, &link_buf)) |target| {
+        if (root.readLink(runtime.io, resolved.items, &link_buf)) |target_len| {
+            const target = link_buf[0..target_len];
             const parent = if (fs.path.isAbsolute(target)) "" else resolved.items[0..parent_len];
             const next_path = try fs.path.join(allocator, &.{ parent, target, components.rest() });
             defer allocator.free(next_path);
@@ -730,24 +735,25 @@ test "rooted desktop lookup keeps absolute icon symlinks inside the target root"
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("usr/share/applications");
-    try tmp.dir.makePath("usr/share/icons/hicolor/64x64/apps");
-    try tmp.dir.makePath("opt/container-app/browser/chrome/icons/default");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(runtime.io, "usr/share/applications");
+    try tmp.dir.createDirPath(runtime.io, "usr/share/icons/hicolor/64x64/apps");
+    try tmp.dir.createDirPath(runtime.io, "opt/container-app/browser/chrome/icons/default");
+    try tmp.dir.writeFile(runtime.io, .{
         .sub_path = "usr/share/applications/container-app.desktop",
         .data = "[Desktop Entry]\nIcon=container-app-icon\nStartupWMClass=ContainerApp\n",
     });
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(runtime.io, .{
         .sub_path = "opt/container-app/browser/chrome/icons/default/default64.png",
         .data = test_png,
     });
     try tmp.dir.symLink(
+        runtime.io,
         "/opt/container-app/browser/chrome/icons/default/default64.png",
         "usr/share/icons/hicolor/64x64/apps/container-app-icon.png",
         .{},
     );
 
-    const root_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const root_path = try tmp.dir.realPathFileAlloc(runtime.io, ".", allocator);
     defer allocator.free(root_path);
     var icon = (try loadRootedAppIcon(allocator, root_path, &.{"ContainerApp"}, 64)).?;
     defer icon.deinit();
@@ -758,13 +764,13 @@ test "rooted icon resolves directory symlinks relative links and root parent tra
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.makePath("assets/nested");
-    try tmp.dir.makePath("usr/share");
-    try tmp.dir.writeFile(.{ .sub_path = "assets/icon.png", .data = test_png });
-    try tmp.dir.symLink("/assets/nested", "icons", .{ .is_directory = true });
-    try tmp.dir.symLink("../../icons", "usr/share/icons", .{ .is_directory = true });
-    try tmp.dir.symLink("cycle", "cycle", .{});
-    const root_path = try tmp.dir.realpathAlloc(allocator, ".");
+    try tmp.dir.createDirPath(runtime.io, "assets/nested");
+    try tmp.dir.createDirPath(runtime.io, "usr/share");
+    try tmp.dir.writeFile(runtime.io, .{ .sub_path = "assets/icon.png", .data = test_png });
+    try tmp.dir.symLink(runtime.io, "/assets/nested", "icons", .{ .is_directory = true });
+    try tmp.dir.symLink(runtime.io, "../../icons", "usr/share/icons", .{ .is_directory = true });
+    try tmp.dir.symLink(runtime.io, "cycle", "cycle", .{});
+    const root_path = try tmp.dir.realPathFileAlloc(runtime.io, ".", allocator);
     defer allocator.free(root_path);
     for ([_][]const u8{ "icons/../icon.png", "usr/share/icons/../icon.png", "../../assets/icon.png" }) |path| {
         var icon = (try loadRootedPng(allocator, tmp.dir, root_path, path)) orelse return error.TestUnexpectedResult;
