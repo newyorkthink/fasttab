@@ -952,6 +952,31 @@ pub const App = struct {
         );
     }
 
+    /// Resize and remap allocate a new backing pixmap. The old named pixmap can
+    /// still rebind successfully, so explicitly retire it and preserve fallback
+    /// snapshots until the usual fresh-Damage recovery promotes the new texture.
+    pub fn handleWindowConfigureEvent(self: *Self, window_id: x11.xcb.xcb_window_t, width: u16, height: u16) void {
+        const tex = self.window_textures.getPtr(window_id) orelse return;
+        if (tex.width == width and tex.height == height) return;
+        self.retireWindowBinding(window_id, tex);
+    }
+
+    pub fn handleWindowMapEvent(self: *Self, window_id: x11.xcb.xcb_window_t) void {
+        const tex = self.window_textures.getPtr(window_id) orelse return;
+        self.retireWindowBinding(window_id, tex);
+    }
+
+    fn retireWindowBinding(self: *Self, window_id: x11.xcb.xcb_window_t, tex: *x11.WindowTexture) void {
+        tex.release(self.conn);
+        self.markThumbnailReady(window_id, false);
+        if (!self.window_hidden) {
+            self.reacquire_pending = true;
+            if (self.findItemIndexByWindowId(window_id)) |index| {
+                self.reacquire_cursor = index;
+            }
+        }
+    }
+
     /// Handle damage events without treating a transient GLX error as window death.
     /// Handle damage using the upstream live-pixmap lifecycle. A stale
     /// backing pixmap is reacquired immediately while FastTab is visible; while
@@ -1776,4 +1801,57 @@ test "failed damage rebind retains cached preview until a later successful rebin
     try std.testing.expect(!App.canPromoteDamageTexture(snapshot, false));
     try std.testing.expect(App.canPromoteDamageTexture(snapshot, true));
     try std.testing.expect(App.canPromoteDamageTexture(null, false));
+}
+
+test "window structure changes preserve fallback and defer hidden reacquisition" {
+    var connection: x11.Connection = undefined;
+    var application: App = undefined;
+    application.conn = &connection;
+    application.items = std.ArrayList(DisplayWindow).init(std.testing.allocator);
+    defer application.items.deinit();
+    application.window_textures = std.AutoHashMap(x11.xcb.xcb_window_t, x11.WindowTexture).init(std.testing.allocator);
+    defer application.window_textures.deinit();
+    application.window_hidden = false;
+    application.reacquire_pending = false;
+    application.reacquire_cursor = 0;
+
+    var item = std.mem.zeroes(DisplayWindow);
+    item.id = 42;
+    item.source_width = 800;
+    item.source_height = 600;
+    var snapshot = std.mem.zeroes(rl.RenderTexture2D);
+    snapshot.id = 7;
+    item.cached_snapshot = snapshot;
+    try application.items.append(item);
+    var tex = std.mem.zeroes(x11.WindowTexture);
+    tex.window_id = 42;
+    tex.width = 800;
+    tex.height = 600;
+    try application.window_textures.put(42, tex);
+
+    // Moving a window without resizing must not restart its preview.
+    application.handleWindowConfigureEvent(42, 800, 600);
+    try std.testing.expect(!application.reacquire_pending);
+    application.handleWindowConfigureEvent(42, 640, 480);
+    try std.testing.expect(application.reacquire_pending);
+    try std.testing.expect(!application.items.items[0].thumbnail_ready);
+    try std.testing.expectEqual(@as(c_uint, 7), application.items.items[0].cached_snapshot.?.id);
+    try std.testing.expectEqual(@as(u32, 800), application.items.items[0].source_width);
+
+    // Remapping can replace a pixmap without changing its dimensions.
+    application.reacquire_pending = false;
+    application.handleWindowMapEvent(42);
+    try std.testing.expect(application.reacquire_pending);
+    application.reacquire_pending = false;
+    application.window_hidden = true;
+    application.handleWindowConfigureEvent(42, 640, 480);
+    application.handleWindowMapEvent(42);
+    try std.testing.expect(!application.reacquire_pending);
+    try std.testing.expect(!application.window_textures.get(42).?.bound);
+    try std.testing.expectEqual(@as(c_uint, 7), application.items.items[0].cached_snapshot.?.id);
+
+    application.window_hidden = false;
+    application.handleWindowMapEvent(99);
+    application.handleWindowConfigureEvent(99, 640, 480);
+    try std.testing.expect(!application.reacquire_pending);
 }

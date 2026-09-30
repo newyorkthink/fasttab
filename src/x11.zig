@@ -129,6 +129,7 @@ pub const X11Error = error{
     PixmapCreationFailed,
     ImageCaptureFailed,
     GeometryFetchFailed,
+    WindowEventSelectionFailed,
     InvalidGeometry,
     OutOfMemory,
     GLXExtensionMissing,
@@ -1349,6 +1350,15 @@ pub fn createWindowTexture(conn: *Connection, window: xcb.xcb_window_t) X11Error
     if (gl_display == null) {
         log.err("No current GLX display found", .{});
         return error.GLXExtensionMissing;
+    }
+
+    // A named pixmap remains valid after resize/remap but no longer represents
+    // the window. Observe those changes instead of relying on a GLX bind error.
+    const event_mask = [_]u32{xcb.XCB_EVENT_MASK_STRUCTURE_NOTIFY};
+    const event_cookie = xcb.xcb_change_window_attributes_checked(conn.conn, window, xcb.XCB_CW_EVENT_MASK, &event_mask);
+    if (xcb.xcb_request_check(conn.conn, event_cookie)) |err| {
+        std.c.free(err);
+        return error.WindowEventSelectionFailed;
     }
 
     // Redirect for compositing

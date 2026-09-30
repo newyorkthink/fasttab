@@ -323,3 +323,19 @@
 - 未改内容：窗口切换、GLX 生命周期、图标解析实现、测试、workflow、打包和 Release 逻辑均未改动。历史变更记录保持原样，只更新顶部当前基线摘要并追加本条。
 - 验证：静态核对 README、AGENTS、源码入口 `window_icon.getWindowIcon` 与隐藏态 `src/hidden_snapshot.zig` 描述一致；两份 README 内容相同。本次不宣称新的 GUI 实机结果。
 - 上游核查：见上一条；无新上游提交需要采用。
+
+## 2026-09-30
+
+### 参考 skippy-xd 补齐实时预览的窗口结构变化处理
+
+- 状态：待实机确认；本地测试、构建和隔离 X11/GLX 验证通过。
+- 修改文件：`src/x11.zig`、`src/main.zig`、`src/app.zig`、`README.md`、`README.zh-CN.md`、`CHANGELOG.md`。
+- 用户现象：在同一工作区播放视频后切换到其他浏览器，FastTab 中的预览似乎停在图片；用户提供 `felixfung/skippy-xd` 作为动态预览参考。静态截图不能确定停帧原因，本次不把工作区不同或窗口被覆盖当作已经确认的根因。
+- 参考核查：阅读 `felixfung/skippy-xd` master `a135eca1c540c646d0214dd4d235eb33ab792835` 的 `src/clientwin.c`、`src/mainwin.c` 与主事件循环。它用当前窗口的 XRender Picture 提供 live 画面，用保留的 pixmap 为不可见窗口提供 shadow，并在结构变化后重建资源。借鉴“跟随当前窗口画面、结构变化不能只依赖绑定报错”的原则，保留 FastTab 原有 GLX/GPU 路径。
+- 确认的代码缺口：FastTab 此前没有监听客户端 ConfigureNotify / MapNotify。窗口缩放或重新映射可替换 backing pixmap，而旧的命名 pixmap 仍然有效；GLX rebind 成功并不能证明它还是当前画面。隔离验证中，窗口从旧颜色绘制到新颜色并缩放后，旧 binding 的 rebind 返回成功，但像素仍为旧颜色。
+- 修改内容：创建窗口纹理时选择客户端 StructureNotify 事件；主循环将尺寸变化和重新映射交给 App。尺寸变化或 MapNotify 到来时释放旧绑定并撤下 live 标记，可见态沿用既有分帧队列重新获取当前 pixmap；单纯移动、未跟踪窗口不重新获取。隐藏态不建立新绑定，也不删除或覆盖已有缓存。
+- 缓存保护：重新获取成功本身仍不能替换有效 `cached_snapshot`，继续等真实 XDamage 后成功 rebind 才恢复 live。隐藏态活动窗口缓存、同工作区缺失缓存 sweep、完整 WM_CLASS 图标身份、快捷键、CLI、workflow 与 Release 合约保持现有基线。
+- 验证：Zig 0.14.0 下 `zig build test` 的 87 项测试全部通过，`ReleaseSafe` / baseline 构建通过；在隔离 Xvfb/GLX 环境使用实际 WindowTexture 与 App 事件处理验证了旧 binding 停帧、缩放恢复、同尺寸客户端重新映射恢复、移动不更换绑定、隐藏态不保留绑定，以及缓存等待后续 Damage 才恢复 live。两份 README 内容相同，完整 diff 与空白检查通过。
+- 范围与限制：隔离验证确认的是通用资源生命周期缺口，不等于已经在真实 Firefox/i3 视频场景确认停帧根因或效果。源窗口仍需 viewable 且持续绘制；隐藏工作区、最小化或应用自身停止绘制时，不能凭旧缓存生成动态视频。未采用根窗口全局重定向或按应用名称的捕获规则。
+- 上游核查：`LBognanni/fasttab` main HEAD 为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`；修改前 `ahead 153 / behind 0`，merge base 为该上游 HEAD，没有新上游提交需要采用。
+- Actions：正常提交到 main，由现有 Public workflow 自动运行；不手动触发、重跑、查询或监控运行结果。本条不宣称新的 CI 或真实桌面验证通过，以本条所在 Git commit 为准。

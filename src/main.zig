@@ -310,6 +310,14 @@ fn processXcbEvents(application: *app.App, conn: *x11.Connection, snapshot_track
                     snapshot_tracker.handleActiveWindowChanged(application);
                 }
             },
+            x11.xcb.XCB_CONFIGURE_NOTIFY => {
+                const configure_event: *x11.xcb.xcb_configure_notify_event_t = @ptrCast(event);
+                application.handleWindowConfigureEvent(configure_event.window, configure_event.width, configure_event.height);
+            },
+            x11.xcb.XCB_MAP_NOTIFY => {
+                const map_event: *x11.xcb.xcb_map_notify_event_t = @ptrCast(event);
+                application.handleWindowMapEvent(map_event.window);
+            },
             else => {
                 if (response_type == conn.damage_event_base + x11.xcb.XCB_DAMAGE_NOTIFY) {
                     const damage_event: *x11.xcb.xcb_damage_notify_event_t = @ptrCast(event);
