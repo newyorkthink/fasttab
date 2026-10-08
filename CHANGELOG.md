@@ -363,3 +363,14 @@
 - 当前行为：源窗口持续绘制时，FastTab 的通用 GLX/GPU 路径提供动态预览；同工作区本身不足以保证源应用持续绘制。后台标签、最小化或不可见工作区的源应用停止更新时，只能保留最后有效画面。两份 README 与 AGENTS 明确记录此限制，历史记录保持原样。
 - 保护：继续保留上一版结构变化恢复、隐藏态临时抓图、缺失缓存 sweep 和 Damage 后恢复 live 的已验证逻辑；不采用根窗口全局捕获、应用名称分支或强制修改用户浏览器配置。所有实验均使用独立测试进程，未修改用户桌面或正在运行的浏览器。
 - 上游核查：同上一条；当前上游没有可采用的新提交，本问题仍不得标记为完成或实机确认。
+
+## 2026-10-08
+
+### 适配 Zig 0.17 的 `zig build run` 参数
+
+- 状态：待 CI 确认。
+- 修改文件：`build.zig`、`CHANGELOG.md`。
+- 现象：手动运行「持续集成与发布」时，测试在编译 `build.zig` 失败：`no field named 'args' in struct 'Build'`。Zig latest 已是 0.17.0。
+- 修改内容：`if (b.args) |args| run_cmd.addArgs(args)` 改为 `run_cmd.addPassthruArgs()`。不改图标、快捷键和切换逻辑。
+- 本地验证：Zig 0.17.0 下 `zig build --help` 通过。
+
