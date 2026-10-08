@@ -329,7 +329,7 @@ fn isFontFile(name: []const u8) bool {
 
 fn fontNameMatches(name: []const u8, needles: []const []const u8) bool {
     for (needles) |needle| {
-        if (std.ascii.indexOfIgnoreCase(name, needle) != null) return true;
+        if (std.ascii.findIgnoreCase(name, needle) != null) return true;
     }
     return false;
 }
