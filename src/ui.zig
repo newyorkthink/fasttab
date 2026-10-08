@@ -5,9 +5,7 @@ const x11 = @import("x11.zig");
 const layout_module = @import("layout.zig");
 const text_sanitize = @import("text_sanitize.zig");
 
-pub const rl = @cImport({
-    @cInclude("raylib.h");
-});
+pub const rl = @import("raylib");
 
 // Re-export constants from layout module
 pub const THUMBNAIL_HEIGHT = layout_module.THUMBNAIL_HEIGHT;
@@ -350,7 +348,7 @@ fn tryLoadFontRecursive(
     var it = dir.iterate();
     while (it.next(runtime.io) catch null) |entry| {
         var path_buf: [std.fs.max_path_bytes:0]u8 = undefined;
-        const full_path = std.fmt.bufPrintZ(&path_buf, "{s}/{s}", .{ dir_path, entry.name }) catch continue;
+        const full_path = std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}", .{ dir_path, entry.name }, 0) catch continue;
 
         if (entry.kind == .directory and depth > 0) {
             if (tryLoadFontRecursive(full_path, depth - 1, size, codepoints, count, needles)) |font| return font;
@@ -425,7 +423,7 @@ pub fn loadSystemFont(size: i32) rl.Font {
         };
         for (local_paths) |rel| {
             var buf: [std.fs.max_path_bytes:0]u8 = undefined;
-            if (std.fmt.bufPrintZ(&buf, "{s}/{s}", .{ home, rel })) |path| {
+            if (std.fmt.bufPrintSentinel(&buf, "{s}/{s}", .{ home, rel }, 0)) |path| {
                 if (tryLoadFont(path.ptr, size, &codepoints[0], count)) |font| return font;
             } else |_| {}
         }

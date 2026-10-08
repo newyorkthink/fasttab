@@ -374,6 +374,7 @@
 - 修改内容：`if (b.args) |args| run_cmd.addArgs(args)` 改为 `run_cmd.addPassthruArgs()`。不改图标、快捷键和切换逻辑。
 - 本地验证：Zig 0.17.0 下 `zig build --help` 通过。
 
+<<<<<<< HEAD
 ### 强化 AI 修改授权与稳定基线保护规则
 
 - 状态：完成；文档规则更新，未进行构建或实机验证。
@@ -383,3 +384,11 @@
 - 执行顺序：同步明确上游核查、CHANGELOG 更新、Git 提交和标准任务流程均须服从事前授权；未经批准保持只读。
 - 保留内容：已有稳定基线、X11/GLX 预览、窗口切换、图标解析、Zig 版本策略、AppImage、GitHub Actions 和 Release 配置均未改动。
 - 验证：仅核对文档和实际修改范围，不宣称新增 CI 或实机验证结果。
+
+### 去掉已经删除的 `@cImport`
+
+- 状态：待 CI 确认。
+- 修改文件：`build.zig`、`src/cabi/`、`src/main.zig`、`src/x11.zig`、`src/ui.zig`、`src/desktop_icon.zig`、`src/thumbnail.zig`、`src/window_icon.zig`、`CHANGELOG.md`。
+- 现象：上一笔只改了 `b.args`。Zig 0.17 还删除了 `@cImport`，测试在翻译 C 头文件时失败。
+- 修改内容：用 `b.addTranslateC` 翻译原来的头文件。`bufPrintZ` 改为 `bufPrintSentinel`。数组重复 `**` 改为 `@splat`。不改图标和切换逻辑。
+

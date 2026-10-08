@@ -3,9 +3,7 @@ const runtime = @import("runtime.zig");
 const fs = std.fs;
 const mem = std.mem;
 
-const c = @cImport({
-    @cInclude("stb_image.h");
-});
+const c = @import("stb_image");
 
 pub const IconResult = struct {
     width: i32,
@@ -394,7 +392,7 @@ fn loadPng(path: []const u8) !IconResult {
     // stb_image expects a null-terminated C string. fs.path.join returns a normal slice,
     // so copying into a sentinel buffer avoids random icon-load failures or over-read.
     var path_buf: [std.fs.max_path_bytes:0]u8 = undefined;
-    const zpath = try std.fmt.bufPrintZ(&path_buf, "{s}", .{path});
+    const zpath = try std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path}, 0);
 
     // We force 4 channels to ensure we get RGBA/ARGB consistently
     const data = c.stbi_load(zpath.ptr, &width, &height, &channels, 4);

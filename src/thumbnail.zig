@@ -1,9 +1,7 @@
 const std = @import("std");
 const x11 = @import("x11.zig");
 
-const stb = @cImport({
-    @cInclude("stb_image_resize2.h");
-});
+const stb = @import("stb_resize");
 
 pub const Thumbnail = struct {
     data: []u8,

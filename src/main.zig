@@ -5,14 +5,7 @@ const worker = @import("worker.zig");
 const app = @import("app.zig");
 const hidden_snapshot = @import("hidden_snapshot.zig");
 
-const c = @cImport({
-    // 这里只导入 libc 声明，避免 C 翻译器求值 glibc 的 fortify 内联包装。
-    @cDefine("_FORTIFY_SOURCE", "0");
-    @cInclude("signal.h");
-    @cInclude("sys/file.h");
-    @cInclude("unistd.h");
-    @cInclude("poll.h");
-});
+const c = @import("posix_c");
 
 const log = std.log.scoped(.fasttab);
 const SHOW_DELAY_FRAMES: u8 = 1;

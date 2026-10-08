@@ -7,22 +7,9 @@ const rl = ui.rl;
 // Feature flags
 const FILTER_BY_CURRENT_DESKTOP = false;
 
-pub const xcb = @cImport({
-    @cInclude("xcb/xcb.h");
-    @cInclude("xcb/xcbext.h");
-    @cInclude("xcb/composite.h");
-    @cInclude("xcb/xcb_image.h");
-    @cInclude("xcb/xcb_keysyms.h");
-    @cInclude("xcb/damage.h");
-});
+pub const xcb = @import("xcb");
 
-pub const xlib = @cImport({
-    @cInclude("X11/Xlib.h");
-    @cInclude("X11/Xlib-xcb.h");
-    @cInclude("GL/gl.h");
-    @cInclude("GL/glx.h");
-    @cInclude("GL/glxext.h");
-});
+pub const xlib = @import("xlib");
 
 const log = std.log.scoped(.fasttab);
 

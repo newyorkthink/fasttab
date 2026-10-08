@@ -96,7 +96,7 @@ fn selectBestIcon(values: []const u32, target_size: u32) ?IconSelection {
 }
 
 test "NET_WM_ICON selection prefers a slightly larger icon over a much smaller one" {
-    var values = [_]u32{0} ** 72;
+    var values: [72]u32 = @splat(0);
     values[0] = 2;
     values[1] = 2;
     values[6] = 8;
