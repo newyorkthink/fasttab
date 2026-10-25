@@ -9,7 +9,8 @@ RAYLIB_URL="https://github.com/raysan5/raylib/archive/refs/tags/${RAYLIB_VERSION
 RAYLIB_DIR="lib/raylib-${RAYLIB_VERSION}"
 
 STB_BASE_URL="https://raw.githubusercontent.com/nothings/stb/refs/heads/master"
-STB_IMAGE_RESIZE_URL="${STB_BASE_URL}/stb_image_resize2.h"
+# stb_image_resize2.h left the repository root on 2026-10-19. This is the last commit that still has it there.
+STB_IMAGE_RESIZE_URL="https://raw.githubusercontent.com/nothings/stb/2b2e64bc4778df6a06fbea3a5dbe61f7a76ecf19/stb_image_resize2.h"
 STB_IMAGE_URL="${STB_BASE_URL}/stb_image.h"
 INCLUDE_DIR="include"
 

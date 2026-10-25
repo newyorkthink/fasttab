@@ -404,4 +404,13 @@
 - 验证：Zig 0.17.0 下 `zig build test` 通过。没有真实桌面确认第一次打开的画面，也没有在 2K、4K 或 12 寸屏幕上确认外观。
 - 上游核查：`LBognanni/fasttab` 的 `main` HEAD 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`，相对本地为 behind 0。没有新提交需要采用。
 
+### 固定已经搬走的 `stb_image_resize2.h` 下载地址
+
+- 状态：待 CI 确认。
+- 修改文件：`setup.sh`、`CHANGELOG.md`。
+- 现象：`d666d97` 的「持续集成与发布」在 `./setup.sh` 失败。`nothings/stb` 于 2026-10-19 把 `stb_image_resize2.h` 移出仓库根目录，原地址返回 404。
+- 修改内容：缩放头文件改为下载仍含该文件的提交 `2b2e64bc4778df6a06fbea3a5dbe61f7a76ecf19`。`stb_image.h` 仍从 `master` 下载。不改缩放函数和窗口逻辑。
+- 验证：该地址可以下载，且仍包含 `stbir_resize_uint8_linear`。CI 结果以这次推送后的工作流为准。
+
+
 
