@@ -1,4 +1,4 @@
-// Visual design constants
+// 1080p visual baseline. Live panels scale from these values; they are not a cap for every screen.
 pub const THUMBNAIL_HEIGHT: u32 = 200;
 pub const MAX_THUMBNAIL_WIDTH: u32 = 356;
 pub const SPACING: u32 = 12;
@@ -7,6 +7,23 @@ pub const MAX_GRID_WIDTH: u32 = 1840;
 pub const MAX_GRID_HEIGHT: u32 = 1040;
 pub const TITLE_FONT_SIZE: i32 = 16;
 pub const TITLE_SPACING: u32 = 8;
+pub const REFERENCE_MONITOR_HEIGHT: u32 = 1080;
+pub const MONITOR_EDGE_MARGIN: u32 = 80;
+
+/// Usable length on one monitor axis. Screens at or below 120px keep their full size.
+pub fn monitorAxisLimit(size: u32) u32 {
+    if (size > 120) return size - MONITOR_EDGE_MARGIN;
+    return size;
+}
+
+/// Scale a 1080p baseline by the current monitor height. 1080 maps back to `base`.
+pub fn scaleFromReferenceHeight(base: u32, monitor_height: u32) u32 {
+    if (base == 0) return 0;
+    const height: u32 = if (monitor_height == 0) REFERENCE_MONITOR_HEIGHT else monitor_height;
+    const scaled = (@as(u64, base) * @as(u64, height)) / REFERENCE_MONITOR_HEIGHT;
+    if (scaled == 0) return 1;
+    return @intCast(scaled);
+}
 
 pub const ThumbnailSize = struct {
     width: u32,

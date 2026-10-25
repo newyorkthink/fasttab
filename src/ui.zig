@@ -13,6 +13,7 @@ pub const SPACING = layout_module.SPACING;
 pub const PADDING = layout_module.PADDING;
 pub const MAX_GRID_WIDTH = layout_module.MAX_GRID_WIDTH;
 pub const MAX_GRID_HEIGHT = layout_module.MAX_GRID_HEIGHT;
+pub const MONITOR_EDGE_MARGIN = layout_module.MONITOR_EDGE_MARGIN;
 pub const TITLE_FONT_SIZE = layout_module.TITLE_FONT_SIZE;
 pub const TITLE_SPACING = layout_module.TITLE_SPACING;
 pub const sanitizeDisplayText = text_sanitize.sanitizeDisplayText;
@@ -115,10 +116,10 @@ pub const ThumbnailSize = layout_module.ThumbnailSize;
 pub const MAX_THUMBNAIL_WIDTH = layout_module.MAX_THUMBNAIL_WIDTH;
 
 pub fn calculateGridLayout(items: []DisplayWindow, target_height: u32) GridLayout {
-    return calculateGridLayoutWithin(items, target_height, MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    return calculateGridLayoutWithin(items, target_height, MAX_GRID_WIDTH, MAX_GRID_HEIGHT, MAX_THUMBNAIL_WIDTH);
 }
 
-pub fn calculateGridLayoutWithin(items: []DisplayWindow, target_height: u32, max_grid_width: u32, max_grid_height: u32) GridLayout {
+pub fn calculateGridLayoutWithin(items: []DisplayWindow, target_height: u32, max_grid_width: u32, max_grid_height: u32, max_thumb_width: u32) GridLayout {
     if (items.len == 0) {
         return GridLayout{
             .columns = 0,
@@ -130,7 +131,7 @@ pub fn calculateGridLayoutWithin(items: []DisplayWindow, target_height: u32, max
     }
 
     for (items) |*item| {
-        const size = calculateThumbnailSize(item.source_width, item.source_height, MAX_THUMBNAIL_WIDTH, target_height);
+        const size = calculateThumbnailSize(item.source_width, item.source_height, max_thumb_width, target_height);
         item.display_width = size.width;
         item.display_height = size.height;
     }
@@ -190,15 +191,16 @@ pub fn calculateGridLayoutWithin(items: []DisplayWindow, target_height: u32, max
 }
 
 pub fn calculateBestLayout(items: []DisplayWindow) GridLayout {
-    return calculateBestLayoutWithin(items, MAX_GRID_WIDTH, MAX_GRID_HEIGHT);
+    return calculateBestLayoutWithin(items, MAX_GRID_WIDTH, MAX_GRID_HEIGHT, THUMBNAIL_HEIGHT, MAX_THUMBNAIL_WIDTH);
 }
 
-pub fn calculateBestLayoutWithin(items: []DisplayWindow, max_grid_width: u32, max_grid_height: u32) GridLayout {
-    var layout = calculateGridLayoutWithin(items, THUMBNAIL_HEIGHT, max_grid_width, max_grid_height);
-    var current_height: u32 = THUMBNAIL_HEIGHT;
+pub fn calculateBestLayoutWithin(items: []DisplayWindow, max_grid_width: u32, max_grid_height: u32, start_height: u32, max_thumb_width: u32) GridLayout {
+    var current_height: u32 = if (start_height == 0) 60 else start_height;
+    var layout = calculateGridLayoutWithin(items, current_height, max_grid_width, max_grid_height, max_thumb_width);
     while ((layout.total_width > max_grid_width or layout.total_height > max_grid_height) and current_height > 60) {
-        current_height -= 10;
-        layout = calculateGridLayoutWithin(items, current_height, max_grid_width, max_grid_height);
+        const step = @min(@as(u32, 10), current_height - 60);
+        current_height -= step;
+        layout = calculateGridLayoutWithin(items, current_height, max_grid_width, max_grid_height, max_thumb_width);
     }
     return layout;
 }
@@ -210,18 +212,22 @@ pub fn calculateBestLayoutForMonitor(
     font: rl.Font,
     workspace_names: []const []const u8,
 ) GridLayout {
-    const monitor_w: u32 = if (monitor_width > 0) @intCast(monitor_width) else MAX_GRID_WIDTH;
-    const monitor_h: u32 = if (monitor_height > 0) @intCast(monitor_height) else MAX_GRID_HEIGHT;
+    const width_known = monitor_width > 0;
+    const height_known = monitor_height > 0;
+    const monitor_w: u32 = if (width_known) @intCast(monitor_width) else MAX_GRID_WIDTH;
+    const monitor_h: u32 = if (height_known) @intCast(monitor_height) else layout_module.REFERENCE_MONITOR_HEIGHT;
 
-    const max_grid_width = if (monitor_w > 120) @min(MAX_GRID_WIDTH, monitor_w - 80) else monitor_w;
-    const max_total_height = if (monitor_h > 120) @min(MAX_GRID_HEIGHT, monitor_h - 80) else monitor_h;
+    const max_grid_width = if (width_known) layout_module.monitorAxisLimit(monitor_w) else MAX_GRID_WIDTH;
+    const max_total_height = if (height_known) layout_module.monitorAxisLimit(monitor_h) else MAX_GRID_HEIGHT;
     const top_offset = workspaceBarOffset(workspace_names);
     const max_grid_height = if (max_total_height > top_offset + PADDING * 2)
         max_total_height - top_offset
     else
         max_total_height;
+    const preview_height = layout_module.scaleFromReferenceHeight(THUMBNAIL_HEIGHT, monitor_h);
+    const preview_width = layout_module.scaleFromReferenceHeight(MAX_THUMBNAIL_WIDTH, monitor_h);
 
-    var layout = calculateBestLayoutWithin(items, max_grid_width, max_grid_height);
+    var layout = calculateBestLayoutWithin(items, max_grid_width, max_grid_height, preview_height, preview_width);
     addWorkspaceBarToLayout(&layout, font, workspace_names, max_grid_width);
     return layout;
 }

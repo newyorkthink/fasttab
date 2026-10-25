@@ -239,6 +239,48 @@ test "calculateRowWidth with multiple items" {
     try testing.expectEqual(@as(u32, 100 + ui.SPACING + 150 + ui.SPACING + 200), width);
 }
 
+test "1080p monitor keeps the baseline preview size" {
+    var items = [_]DisplayWindow{
+        testWindow(1920, 1080),
+    };
+    const font = std.mem.zeroes(ui.rl.Font);
+    const layout = ui.calculateBestLayoutForMonitor(&items, 1920, 1080, font, &.{});
+
+    try testing.expectEqual(ui.THUMBNAIL_HEIGHT, items[0].display_height);
+    try testing.expect(items[0].display_width <= ui.MAX_THUMBNAIL_WIDTH);
+    try testing.expect(layout.total_width <= 1920 - ui.MONITOR_EDGE_MARGIN);
+    try testing.expect(layout.total_height <= 1080 - ui.MONITOR_EDGE_MARGIN);
+}
+
+test "2K monitor grows past the 1080p panel cap" {
+    var items = [_]DisplayWindow{
+        testWindow(1920, 1080),
+        testWindow(1920, 1080),
+        testWindow(1920, 1080),
+        testWindow(1920, 1080),
+    };
+    const font = std.mem.zeroes(ui.rl.Font);
+    const layout = ui.calculateBestLayoutForMonitor(&items, 2560, 1440, font, &.{});
+
+    try testing.expect(items[0].display_height > ui.THUMBNAIL_HEIGHT);
+    try testing.expect(layout.total_width > ui.MAX_GRID_WIDTH);
+    try testing.expect(layout.total_width <= 2560 - ui.MONITOR_EDGE_MARGIN);
+    try testing.expect(layout.total_height <= 1440 - ui.MONITOR_EDGE_MARGIN);
+}
+
+test "short tablet shrinks the preview below the 1080p baseline" {
+    var items = [_]DisplayWindow{
+        testWindow(1920, 1080),
+    };
+    const font = std.mem.zeroes(ui.rl.Font);
+    const layout = ui.calculateBestLayoutForMonitor(&items, 1280, 800, font, &.{});
+
+    try testing.expect(items[0].display_height < ui.THUMBNAIL_HEIGHT);
+    try testing.expect(items[0].display_width < ui.MAX_THUMBNAIL_WIDTH);
+    try testing.expect(layout.total_width <= 1280 - ui.MONITOR_EDGE_MARGIN);
+    try testing.expect(layout.total_height <= 800 - ui.MONITOR_EDGE_MARGIN);
+}
+
 test "workspace bar expands a single-window layout without exceeding monitor width" {
     var grid = GridLayout{
         .columns = 1,

@@ -392,3 +392,16 @@
 - 修改内容：用 `b.addTranslateC` 翻译原来的头文件。`bufPrintZ` 改为 `bufPrintSentinel`。数组重复 `**` 改为 `@splat`。`indexOfIgnoreCase` 改为 `findIgnoreCase`。不改图标和切换逻辑。
 - 记录：删掉误留的 `<<<<<<< HEAD`。
 
+## 2026-10-25
+
+### 打开时不再拉伸背景，面板大小跟随当前屏幕
+
+- 状态：待实机确认。
+- 修改文件：`src/app.zig`、`src/ui.zig`、`src/layout.zig`、`src/tests/ui_test.zig`、`CHANGELOG.md`。
+- 现象：第一次 Alt+Tab 时，切换窗口先按启动时的 800×600 显示，再立刻拉成真实大小。底部和半透明背景会扭一下。面板上限写死为约 1840×1040，2K 和 4K 不能变大。
+- 修改内容：仍处于隐藏状态时先按当前布局设置大小和位置，处理完尺寸变化并画出一帧，然后再显示。面板上限改为当前屏幕四边留 80 像素；预览宽高按屏幕高度相对 1080p 缩放。1080p 仍使用原来的 200×356 基准。窗口过多时仍会把预览高度降到不低于 60。
+- 未改动：Alt+Tab / Win+Tab、选中窗口、GLX 实时预览、隐藏态缓存、图标、快捷键、字号、CI 和 Release。
+- 验证：Zig 0.17.0 下 `zig build test` 通过。没有真实桌面确认第一次打开的画面，也没有在 2K、4K 或 12 寸屏幕上确认外观。
+- 上游核查：`LBognanni/fasttab` 的 `main` HEAD 仍为 `e8aceb726c45dbf8d491e4a7eac79ec1cd97e363`，相对本地为 behind 0。没有新提交需要采用。
+
+

@@ -587,9 +587,9 @@ pub const App = struct {
         );
         const after_layout_ns = runtime.nanoTimestamp();
 
-        rl.ClearWindowState(rl.FLAG_WINDOW_HIDDEN);
-        const after_map_ns = runtime.nanoTimestamp();
-
+        // The window is created at 800x600. Resize and draw while it is still
+        // hidden so the first mapped frame is already the real size. Mapping
+        // first stretches the bottom and background for one frame.
         rl.SetWindowSize(@intCast(self.current_layout.total_width), @intCast(self.current_layout.total_height));
         const after_size_ns = runtime.nanoTimestamp();
 
@@ -597,6 +597,13 @@ pub const App = struct {
         const win_y = self.monitor.y + @divTrunc(self.monitor.height - @as(i32, @intCast(self.current_layout.total_height)), 2);
         rl.SetWindowPosition(win_x, win_y);
         const after_position_ns = runtime.nanoTimestamp();
+
+        rl.PollInputEvents();
+        self.render();
+        const after_draw_ns = runtime.nanoTimestamp();
+
+        rl.ClearWindowState(rl.FLAG_WINDOW_HIDDEN);
+        const after_map_ns = runtime.nanoTimestamp();
 
         rl.SetWindowFocused();
         const after_focus_ns = runtime.nanoTimestamp();
@@ -614,16 +621,17 @@ pub const App = struct {
         const total_us = @divTrunc(after_focus_ns - start_ns, std.time.ns_per_us);
         if (total_us >= PROFILE_SLOW_SHOW_WINDOW_US) {
             log.debug(
-                "profile showWindow(us): total={d} notify={d} monitor={d} layout={d} map={d} size={d} position={d} focus={d}",
+                "profile showWindow(us): total={d} notify={d} monitor={d} layout={d} size={d} position={d} draw={d} map={d} focus={d}",
                 .{
                     total_us,
                     @divTrunc(after_notify_ns - start_ns, std.time.ns_per_us),
                     @divTrunc(after_monitor_ns - after_notify_ns, std.time.ns_per_us),
                     @divTrunc(after_layout_ns - after_monitor_ns, std.time.ns_per_us),
-                    @divTrunc(after_map_ns - after_layout_ns, std.time.ns_per_us),
-                    @divTrunc(after_size_ns - after_map_ns, std.time.ns_per_us),
+                    @divTrunc(after_size_ns - after_layout_ns, std.time.ns_per_us),
                     @divTrunc(after_position_ns - after_size_ns, std.time.ns_per_us),
-                    @divTrunc(after_focus_ns - after_position_ns, std.time.ns_per_us),
+                    @divTrunc(after_draw_ns - after_position_ns, std.time.ns_per_us),
+                    @divTrunc(after_map_ns - after_draw_ns, std.time.ns_per_us),
+                    @divTrunc(after_focus_ns - after_map_ns, std.time.ns_per_us),
                 },
             );
         }
