@@ -412,5 +412,15 @@
 - 修改内容：缩放头文件改为下载仍含该文件的提交 `2b2e64bc4778df6a06fbea3a5dbe61f7a76ecf19`。`stb_image.h` 仍从 `master` 下载。不改缩放函数和窗口逻辑。
 - 验证：该地址可以下载，且仍包含 `stbir_resize_uint8_linear`。CI 结果以这次推送后的工作流为准。
 
+### 缩放头文件改为跟随新仓库的 `main`
+
+- 状态：待 CI 确认。
+- 修改文件：`setup.sh`、`CHANGELOG.md`。
+- 原因：用户要求不固定这个头文件的版本。`AGENTS.md` 里不固定版本只约束 Zig；按本次要求，缩放头文件也不再钉提交。
+- 修改内容：`stb_image_resize2.h` 改为从 `nothings/stb_image_resize` 的 `main` 下载。`stb_image.h` 仍从 `nothings/stb` 的 `master` 下载。不改缩放调用和窗口逻辑。
+- 核对：新地址上的 `stbir_resize_uint8_linear` 和 `STBIR_RGBA` 仍在；步长参数现为 64 位整数，现有调用使用 `@intCast`，不需要改调用处。
+- 已知结果：上一笔固定地址的持续集成已经成功。这次是否通过，以推送后的工作流为准。
+
+
 
 
